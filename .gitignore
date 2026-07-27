@@ -1,0 +1,38 @@
+# ===== 敏感資料：絕對不能上傳（本專題處理個資，特別重要）=====
+.env
+.env.*
+*.key
+mappings/
+mapping_table*
+secrets/
+*_real_data*
+real_data/
+
+# ===== Python =====
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ipynb_checkpoints/
+
+# ===== Node / 瀏覽器擴充 =====
+node_modules/
+dist/
+build/
+*.log
+npm-debug.log*
+
+# ===== 模型檔（太大，不放 git）=====
+*.bin
+*.onnx
+*.safetensors
+models/
+
+# ===== 系統與編輯器 =====
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
