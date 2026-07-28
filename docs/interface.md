@@ -56,7 +56,8 @@ detect(text: str) -> dict
 | `TW_ID` | 台灣身分證字號 |
 | `TW_TAX` | 統一編號 |
 | `TW_NHI` | 健保卡號 |
-| `PHONE` | 電話號碼 |
+| `TW_PHONE_M` | 台灣手機號碼 |
+| `TW_PHONE_L` | 台灣市內電話（含區碼） |
 | `EMAIL` | 電子郵件地址 |
 | `CREDIT_CARD` | 信用卡號 |
 | `API_KEY` | API 金鑰 |
