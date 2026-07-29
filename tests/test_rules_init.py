@@ -97,35 +97,42 @@ class DetectAllTests(unittest.TestCase):
         starts = [span["start"] for span in result["spans"]]
         self.assertEqual(starts, sorted(starts))
 
-    def test_overlapping_spans_are_all_preserved_with_source_marked(self):
+    def test_overlapping_spans_are_resolved_by_layer4_keeping_larger_range(self):
         # "A123456789" 本身是合法身分證字號（checksum 正確），
-        # 同時也是這個 email 的 local-part，兩個規則會產生重疊的 span，
-        # detect_all 應該兩個都保留，不做去重或合併。
+        # 同時也是這個 email 的 local-part，TW_ID 與 EMAIL 兩個規則會
+        # 產生重疊的 span；經 Layer 4 解析後，範圍較大的 EMAIL 應該保留，
+        # 範圍較小、被包含在內的 TW_ID 應該被移除。
         text = "帳號 A123456789@example.com 請注意"
         result = detect_all(text)
 
-        tw_id_spans = [s for s in result["spans"] if s["type"] == "TW_ID"]
-        email_spans = [s for s in result["spans"] if s["type"] == "EMAIL"]
+        types_found = [span["type"] for span in result["spans"]]
+        self.assertEqual(types_found, ["EMAIL"])
 
-        self.assertEqual(len(tw_id_spans), 1)
-        self.assertEqual(len(email_spans), 1)
-
-        tw_id_span = tw_id_spans[0]
-        email_span = email_spans[0]
-
-        # 兩個 span 有重疊區間（TW_ID 落在 EMAIL 範圍內）
-        self.assertLess(tw_id_span["start"], email_span["end"])
-        self.assertLess(email_span["start"], tw_id_span["end"])
-
-        self.assertEqual(text[tw_id_span["start"]:tw_id_span["end"]], "A123456789")
+        email_span = result["spans"][0]
         self.assertEqual(
             text[email_span["start"]:email_span["end"]],
             "A123456789@example.com",
         )
 
-        # source 欄位標記來源，供 Layer 4 之後判斷衝突處理
-        self.assertEqual(tw_id_span["source"], "rule")
-        self.assertEqual(email_span["source"], "rule")
+    def test_layer4_resolves_b_example_email_wins_over_embedded_phone(self):
+        # B 提出的例子：手機號碼剛好是 email local-part 的一部分，
+        # 範圍較大的 EMAIL 應該保留，藏在裡面的 TW_PHONE_M 應該被移除。
+        text = "聯絡我 a0912345678@gmail.com"
+        result = detect_all(text)
+
+        types_found = [span["type"] for span in result["spans"]]
+        self.assertEqual(types_found, ["EMAIL"])
+
+        email_span = result["spans"][0]
+        self.assertEqual(
+            text[email_span["start"]:email_span["end"]],
+            "a0912345678@gmail.com",
+        )
+
+        # 輸出的 spans 必須互不重疊，下游才能安全地依座標替換文字
+        spans = result["spans"]
+        for i in range(len(spans) - 1):
+            self.assertLessEqual(spans[i]["end"], spans[i + 1]["start"])
 
     def test_no_match_in_plain_text(self):
         text = "這段文字沒有任何個資。"
