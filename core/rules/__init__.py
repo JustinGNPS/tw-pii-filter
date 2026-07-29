@@ -1,7 +1,7 @@
 """core.rules 套件：統一匯出所有 PII 偵測規則，並提供 detect_all() 一次執行全部規則。"""
 
 from core.rules.api_key import detect_api_key, is_valid_api_key
-from core.rules.conflict_resolver import resolve_overlaps
+from core.rules.conflict_resolver import renumber_replacements, resolve_overlaps
 from core.rules.credit_card import detect_credit_card, is_valid_credit_card
 from core.rules.email import detect_email, is_valid_email
 from core.rules.tw_id import detect_tw_id, is_valid_tw_id
@@ -14,6 +14,7 @@ __all__ = [
     "detect_api_key",
     "is_valid_api_key",
     "resolve_overlaps",
+    "renumber_replacements",
     "detect_credit_card",
     "is_valid_credit_card",
     "detect_email",
@@ -44,15 +45,26 @@ _DETECTORS = (
 )
 
 
-def detect_all(text: str) -> dict:
-    """依序執行 core/rules 底下所有偵測規則，合併所有 spans 並經 Layer 4
-    （見 core.rules.conflict_resolver）解析重疊衝突後，回傳互不重疊的單一結果，
-    符合 docs/interface.md「spans 之間不應重疊」的約定。
+def detect_all(text: str, extra_spans: list = None) -> dict:
+    """依序執行 core/rules 底下所有規則（source="rule"），並可透過 extra_spans
+    帶入語意層（如 D 的 NER model，source="model"）已產生的 spans 一併整合。
+    所有 spans 合併後經 Layer 4（見 core.rules.conflict_resolver）解析重疊
+    衝突，回傳互不重疊的單一結果，符合 docs/interface.md 的約定。
+
+    衝突解析完成後會重新編號 replacement 欄位，確保每個 type 的序號從 1
+    開始連續遞增、不因仲裁移除的 span 而跳號。
+
+    extra_spans 中每個 span 必須符合 docs/interface.md 定義的欄位格式
+    （start/end/type/text/confidence/source/replacement），source 應為 "model"。
     """
     spans = []
     for detector in _DETECTORS:
         spans.extend(detector(text)["spans"])
 
+    if extra_spans:
+        spans.extend(extra_spans)
+
     spans = resolve_overlaps(spans)
+    spans = renumber_replacements(spans)
 
     return {"text": text, "spans": spans}
