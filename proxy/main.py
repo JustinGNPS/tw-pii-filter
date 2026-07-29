@@ -6,8 +6,12 @@
 
 agent 那邊把 base URL 指到 `http://localhost:8000/v1` 即可。
 
-第一版行為：**完全透明轉發 + 只警告不遮蔽**（依 PDF §7.3）。
-偵測到個資時只在 proxy 的 log 印出型別與筆數，請求內容照原樣送給雲端 AI。
+第二版行為：**遮蔽 + 還原**。
+送出前把個資換成佔位符，雲端 AI 全程只看到 `[TW_ID_1]`；
+回覆時再換回真值，agent 拿到的內容與沒裝過濾器時一致。
+
+遮蔽與還原必須同時啟用 —— 只遮蔽不還原會讓 agent 的 diff 比對失敗
+（實測 Aider 會回報 SEARCH/REPLACE block failed to match）。
 """
 
 import json
@@ -19,7 +23,8 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import StreamingResponse
 
-from proxy import config, detector, forward
+from proxy import config, detector, forward, masker, restorer
+from proxy.mapping import MappingTable
 
 # Windows 主控台預設是 cp950，中文警告訊息可能會炸掉；統一轉成 utf-8
 for _stream in (sys.stdout, sys.stderr):
@@ -40,6 +45,8 @@ _SCANNED_PATHS = ("chat/completions", "completions", "embeddings", "responses")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     app.state.client = forward.make_client()
+    # 對照表只存在記憶體，隨行程結束消失 —— 真實個資不落地
+    app.state.mapping = MappingTable()
     logger.info("proxy 啟動\n%s", config.startup_summary())
     if not config.UPSTREAM_API_KEY:
         logger.warning("找不到上游金鑰，轉發一定會失敗。請確認 .env 內的變數名稱。")
@@ -59,35 +66,39 @@ async def healthz() -> dict:
         "status": "ok",
         "upstream": config.UPSTREAM_BASE_URL,
         "upstream_key_loaded": bool(config.UPSTREAM_API_KEY),
-        "mode": "transparent",  # 第一版：只警告，不遮蔽
+        "mode": "masking",  # 第二版：遮蔽 + 還原
+        "mapping_entries": len(app.state.mapping),
     }
 
 
-def _warn_if_pii(path: str, body: bytes) -> float:
-    """掃描請求內容並在 log 印出警告，回傳掃描花費的毫秒數。
+def _mask_request(path: str, body: bytes, table: MappingTable) -> tuple[bytes, float]:
+    """遮蔽請求內容，回傳 (要送出的 body, 花費的毫秒數)。
 
-    第一版**不修改 body**。偵測或解析失敗一律吞掉 —— proxy 的第一要務是
-    不要弄壞 agent，偵測只是附加價值。
+    遮蔽或解析失敗一律吞掉並原樣轉發 —— proxy 的第一要務是不要弄壞 agent。
+    代價是那次請求不受保護，因此失敗會以 ERROR 等級留下紀錄。
     """
     if not body or not any(path.endswith(p) for p in _SCANNED_PATHS):
-        return 0.0
+        return body, 0.0
 
     started = time.perf_counter()
     try:
         payload = json.loads(body.decode("utf-8"))
-        results = detector.scan_payload(payload)
-        warning = detector.format_warning(detector.summarize(results))
-        if warning:
-            # 只印型別與筆數，絕不印偵測到的原始內容
-            logger.warning("%s（%d 個欄位）", warning, len(results))
-    except Exception as exc:  # noqa: BLE001 - 偵測失敗不能影響轉發
-        logger.debug("略過偵測：%s", exc)
-    return (time.perf_counter() - started) * 1000
+        counts = masker.mask_payload(payload, table)
+        if counts:
+            body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+            # 只印型別與筆數，絕不印遮蔽掉的原始內容
+            logger.warning("已遮蔽：%s", detector.format_warning(counts))
+    except json.JSONDecodeError:
+        pass  # 不是 JSON（例如檔案上傳），本來就沒得掃
+    except Exception as exc:  # noqa: BLE001 - 遮蔽失敗不能讓 agent 拿不到回覆
+        logger.error("遮蔽失敗，該次請求未受保護：%s", exc)
+    return body, (time.perf_counter() - started) * 1000
 
 
 async def _proxy(path: str, request: Request) -> Response:
+    table: MappingTable = request.app.state.mapping
     body = await request.body()
-    detect_ms = _warn_if_pii(path, body)
+    body, detect_ms = _mask_request(path, body, table)
 
     started = time.perf_counter()
     upstream = await forward.open_upstream(
@@ -101,21 +112,35 @@ async def _proxy(path: str, request: Request) -> Response:
     headers = forward.filter_response_headers(dict(upstream.headers))
 
     if forward.is_event_stream(upstream):
-        # SSE：一段一段往下傳，不能等整包收完，否則 agent 的串流效果會消失
+        # SSE：一段一段往下傳，不能等整包收完，否則 agent 的串流效果會消失。
+        # 佔位符可能被切在兩個 chunk 或兩個事件之間，交給 SSERestorer 處理。
         async def relay():
+            sse = restorer.SSERestorer(table)
             try:
                 async for chunk in upstream.aiter_bytes():
-                    yield chunk
+                    if not len(table):
+                        # 對照表是空的就沒有東西需要還原，原樣穿透即可，
+                        # 省下重新序列化的成本，也維持位元組層級的透明
+                        yield chunk
+                        continue
+                    out = sse.feed(chunk)
+                    if out:
+                        yield out
+                tail = sse.flush()
+                if tail:
+                    yield tail
             finally:
                 await upstream.aclose()
                 total = (time.perf_counter() - started) * 1000
                 logger.info(
-                    "%s /%s -> %d [SSE] 上游 %.0f ms｜偵測 %.1f ms",
+                    "%s /%s -> %d [SSE] 上游 %.0f ms｜遮蔽 %.1f ms｜還原 %d 筆%s",
                     request.method,
                     path,
                     upstream.status_code,
                     total,
                     detect_ms,
+                    sse.restored,
+                    f"（{sse.unknown} 筆查無對照）" if sse.unknown else "",
                 )
 
         return StreamingResponse(
@@ -127,14 +152,21 @@ async def _proxy(path: str, request: Request) -> Response:
 
     content = await upstream.aread()
     await upstream.aclose()
+
+    restored = unknown = 0
+    if len(table):  # 對照表是空的就沒有東西需要還原
+        content, restored, unknown = restorer.restore_body(content, table)
+
     total = (time.perf_counter() - started) * 1000
     logger.info(
-        "%s /%s -> %d 上游 %.0f ms｜偵測 %.1f ms",
+        "%s /%s -> %d 上游 %.0f ms｜遮蔽 %.1f ms｜還原 %d 筆%s",
         request.method,
         path,
         upstream.status_code,
         total,
         detect_ms,
+        restored,
+        f"（{unknown} 筆查無對照）" if unknown else "",
     )
     return Response(
         content=content,
