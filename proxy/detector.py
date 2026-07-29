@@ -17,18 +17,28 @@
 from typing import Any
 
 from core.rules import detect_all as _detect_all
+from proxy.cache import DetectionCache
 
 # JSON 路徑：dict 的 key 用 str，list 的 index 用 int
 Path = tuple[Any, ...]
 
+# 行程共用的偵測快取。agent 每次請求都重送整段對話歷史，同一份檔案內容
+# 會被重複掃十幾次 —— 見 `proxy/cache.py` 的說明。
+CACHE = DetectionCache()
 
-def detect(text: str) -> dict:
-    """呼叫 A 的偵測核心。回傳格式見 `docs/interface.md`。
+
+def detect(text: str, cache: DetectionCache | None = None) -> dict:
+    """呼叫 A 的偵測核心（經過快取）。回傳格式見 `docs/interface.md`。
 
     A 的 `detect_all()` 內部已做 Layer 4 重疊仲裁（`core/rules/conflict_resolver.py`），
     因此回傳的 spans 保證互不重疊 —— proxy 之後做替換時不需要自己再仲裁。
+
+    偵測是純函式（同樣的文字永遠得到同樣的結果），因此快取不會改變行為。
+    測試可傳入自己的 `DetectionCache` 以取得隔離。
     """
-    return _detect_all(text)
+    table = CACHE if cache is None else cache
+    spans = table.get_or_compute(text, lambda t: _detect_all(t)["spans"])
+    return {"text": text, "spans": spans}
 
 
 def _extract_from_message(message: Any, base: Path) -> list[tuple[Path, str]]:
@@ -109,15 +119,15 @@ def set_at(payload: Any, path: Path, value: Any) -> None:
     node[path[-1]] = value
 
 
-def scan_payload(payload: Any) -> list[dict]:
+def scan_payload(payload: Any, cache: DetectionCache | None = None) -> list[dict]:
     """掃描整包 payload，回傳每個文字欄位的偵測結果。
 
     回傳 `[{"path": Path, "text": str, "spans": [...]}, ...]`，只包含有偵測到
-    東西的欄位。第一版僅供警告與統計使用，不修改 payload。
+    東西的欄位。本函式不修改 payload；遮蔽由 `proxy.masker` 負責。
     """
     results = []
     for path, text in extract_texts(payload):
-        spans = detect(text)["spans"]
+        spans = detect(text, cache)["spans"]
         if spans:
             results.append({"path": path, "text": text, "spans": spans})
     return results

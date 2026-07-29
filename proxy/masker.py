@@ -14,6 +14,7 @@ A 的 `detect_all()` 內部已做 Layer 4 重疊仲裁，spans 保證互不重�
 """
 
 from proxy import detector
+from proxy.cache import DetectionCache
 from proxy.mapping import MappingTable
 
 
@@ -25,13 +26,15 @@ def mask_text(text: str, spans: list[dict], table: MappingTable) -> str:
     return text
 
 
-def mask_payload(payload: dict, table: MappingTable) -> dict[str, int]:
+def mask_payload(
+    payload: dict, table: MappingTable, cache: DetectionCache | None = None
+) -> dict[str, int]:
     """就地遮蔽整包 payload，回傳「型別 -> 遮蔽筆數」的摘要。
 
     摘要**不含任何原始個資內容**，可安全寫進 log。
     沒偵測到東西時回傳空 dict，payload 完全不會被動到。
     """
-    results = detector.scan_payload(payload)
+    results = detector.scan_payload(payload, cache)
     for result in results:
         masked = mask_text(result["text"], result["spans"], table)
         detector.set_at(payload, result["path"], masked)

@@ -68,6 +68,7 @@ async def healthz() -> dict:
         "upstream_key_loaded": bool(config.UPSTREAM_API_KEY),
         "mode": "masking",  # 第二版：遮蔽 + 還原
         "mapping_entries": len(app.state.mapping),
+        "detection_cache": detector.CACHE.stats(),
     }
 
 
@@ -87,7 +88,11 @@ def _mask_request(path: str, body: bytes, table: MappingTable) -> tuple[bytes, f
         if counts:
             body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
             # 只印型別與筆數，絕不印遮蔽掉的原始內容
-            logger.warning("已遮蔽：%s", detector.format_warning(counts))
+            logger.warning(
+                "已遮蔽：%s｜快取命中率 %.0f%%",
+                detector.format_warning(counts),
+                detector.CACHE.hit_rate * 100,
+            )
     except json.JSONDecodeError:
         pass  # 不是 JSON（例如檔案上傳），本來就沒得掃
     except Exception as exc:  # noqa: BLE001 - 遮蔽失敗不能讓 agent 拿不到回覆
