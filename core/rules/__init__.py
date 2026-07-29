@@ -1,0 +1,58 @@
+"""core.rules 套件：統一匯出所有 PII 偵測規則，並提供 detect_all() 一次執行全部規則。"""
+
+from core.rules.api_key import detect_api_key, is_valid_api_key
+from core.rules.conflict_resolver import resolve_overlaps
+from core.rules.credit_card import detect_credit_card, is_valid_credit_card
+from core.rules.email import detect_email, is_valid_email
+from core.rules.tw_id import detect_tw_id, is_valid_tw_id
+from core.rules.tw_nhi import detect_tw_nhi, is_valid_tw_nhi
+from core.rules.tw_phone_l import detect_tw_phone_l, is_valid_tw_phone_l
+from core.rules.tw_phone_m import detect_tw_phone_m, is_valid_tw_phone_m
+from core.rules.tw_tax import detect_tw_tax, is_valid_tw_tax
+
+__all__ = [
+    "detect_api_key",
+    "is_valid_api_key",
+    "resolve_overlaps",
+    "detect_credit_card",
+    "is_valid_credit_card",
+    "detect_email",
+    "is_valid_email",
+    "detect_tw_id",
+    "is_valid_tw_id",
+    "detect_tw_nhi",
+    "is_valid_tw_nhi",
+    "detect_tw_phone_l",
+    "is_valid_tw_phone_l",
+    "detect_tw_phone_m",
+    "is_valid_tw_phone_m",
+    "detect_tw_tax",
+    "is_valid_tw_tax",
+    "detect_all",
+]
+
+# 依序執行的偵測器清單，新增規則時同步加進來即可被 detect_all() 涵蓋
+_DETECTORS = (
+    detect_tw_id,
+    detect_tw_tax,
+    detect_tw_nhi,
+    detect_tw_phone_m,
+    detect_tw_phone_l,
+    detect_email,
+    detect_credit_card,
+    detect_api_key,
+)
+
+
+def detect_all(text: str) -> dict:
+    """依序執行 core/rules 底下所有偵測規則，合併所有 spans 並經 Layer 4
+    （見 core.rules.conflict_resolver）解析重疊衝突後，回傳互不重疊的單一結果，
+    符合 docs/interface.md「spans 之間不應重疊」的約定。
+    """
+    spans = []
+    for detector in _DETECTORS:
+        spans.extend(detector(text)["spans"])
+
+    spans = resolve_overlaps(spans)
+
+    return {"text": text, "spans": spans}
