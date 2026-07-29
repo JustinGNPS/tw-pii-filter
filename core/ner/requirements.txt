@@ -1,0 +1,8 @@
+# D（語意層 NER）的相依套件。版本鎖死，不擅自升級（CONTRIBUTING.md 鐵則 6）。
+# 安裝：.venv\Scripts\python.exe -m pip install -r core/ner/requirements.txt
+
+torch==2.3.1
+transformers==4.41.2
+tokenizers==0.19.1
+huggingface-hub==0.23.4
+numpy==1.26.4
