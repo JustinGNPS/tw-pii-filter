@@ -35,3 +35,18 @@ def resolve_overlaps(spans: list) -> list:
 
     accepted.sort(key=lambda span: (span["start"], span["end"]))
     return accepted
+
+
+def renumber_replacements(spans: list) -> list:
+    """在 spans 已經互不重疊、依 start 排序後，依 type 分組重新編號 replacement 欄位。
+
+    衝突解析可能移除掉某個 type 較早出現的 span，使原本各偵測器獨立編出的
+    序號留下缺口（例如只剩 TW_ID_2 卻沒有 TW_ID_1）。本函式在仲裁完成後
+    重新依序編號，確保每個 type 的序號從 1 開始連續遞增、不跳號。
+    """
+    counters = {}
+    for span in spans:
+        type_ = span["type"]
+        counters[type_] = counters.get(type_, 0) + 1
+        span["replacement"] = f"[{type_}_{counters[type_]}]"
+    return spans
