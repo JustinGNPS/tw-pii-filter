@@ -20,6 +20,12 @@ TODO(D): 仍待確認：
   - 已修正一個重大 bug：不可用模型 word 欄位當作 text，因中文 wordpiece 重組後
     word 會夾帶多餘空格（例如 "王 小 明"），導致 text[start:end] != text，
     違反 interface.md 對字元索引的要求。已改為一律用 text[start:end] 切片。
+  - 用 data/synthetic_pii/ 合成語料實測（程式碼/對話紀錄/log 混雜情境）後發現：
+    1. 出現第三種型別 "position"（客服/客戶/工程師等職稱/角色詞），信心分數常常
+       很高，但這類詞本身不算個資，是否要遮蔽需跟團隊討論
+    2. 電話號碼這類數字序列常被模型切碎、誤判成 name/address，且信心分數明顯偏低
+       （曾出現 0.27），已加上 min_confidence 門檻（預設 0.5）過濾這類雜訊，
+       電話號碼本來就該交給 A 的規則層處理
 """
 
 from typing import List, Dict, Optional
@@ -34,6 +40,7 @@ class NERDetector:
 
     MODEL_NAME = "gyr66/bert-base-chinese-finetuned-ner"
     SOURCE = "model"  # 供 A 的 conflict_resolver 分辨偵測來源
+    DEFAULT_MIN_CONFIDENCE = 0.5  # 低於此信心分數的偵測結果視為雜訊，直接過濾
 
     def __init__(self, device: int = -1):
         """
@@ -50,12 +57,16 @@ class NERDetector:
             device=device,
         )
 
-    def detect(self, text: str) -> List[Dict]:
+    def detect(self, text: str, min_confidence: float = DEFAULT_MIN_CONFIDENCE) -> List[Dict]:
         """
         對輸入文字執行 NER 偵測，回傳符合系統規格的實體清單。
 
         Args:
             text: 待偵測的原始文字
+            min_confidence: 信心分數門檻，低於此值的結果會被過濾掉。
+                實測發現電話號碼這類數字序列常被模型切碎、誤判成 name/address，
+                且信心分數明顯偏低（例如 0.27），這類雜訊不該送進 A 的仲裁邏輯，
+                過濾掉即可（電話號碼本來就該由 A 的規則層處理）。
 
         Returns:
             List[Dict]: 每個元素格式（暫定，待對齊 docs/interface.md）：
@@ -75,6 +86,10 @@ class NERDetector:
 
         formatted: List[Dict] = []
         for ent in raw_results:
+            score = float(ent.get("score", 0.0))
+            if score < min_confidence:
+                continue  # 過濾低信心雜訊
+
             start = ent.get("start")
             end = ent.get("end")
             formatted.append({
@@ -85,7 +100,7 @@ class NERDetector:
                 # 會夾帶多餘空格（例如 "王 小 明"），導致 text[start:end] != text。
                 # 一律用 start/end 對原文切片，才能保證符合 interface.md 的字元索引要求。
                 "text": text[start:end],
-                "confidence": float(ent.get("score", 0.0)),
+                "confidence": score,
                 "source": self.SOURCE,
             })
 
@@ -108,18 +123,19 @@ def _get_detector() -> NERDetector:
     return _detector_instance
 
 
-def detect_ner(text: str) -> List[Dict]:
+def detect_ner(text: str, min_confidence: float = NERDetector.DEFAULT_MIN_CONFIDENCE) -> List[Dict]:
     """
     供 A 的 detect_all(text, extra_spans=detect_ner(text)) 呼叫的對外介面。
 
     Args:
         text: 待偵測的原始文字
+        min_confidence: 信心分數門檻，低於此值的結果會被過濾（預設 0.5）
 
     Returns:
         List[Dict]: 原始偵測結果，每筆含 start/end/type/text/confidence/source。
         不處理重疊、不產生 replacement 編號 —— 這些交給 A 的 detect_all() 統一仲裁。
     """
-    return _get_detector().detect(text)
+    return _get_detector().detect(text, min_confidence=min_confidence)
 
 
 if __name__ == "__main__":
