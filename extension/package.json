@@ -1,0 +1,24 @@
+{
+  "name": "tw-pii-filter-extension",
+  "version": "0.1.0",
+  "private": true,
+  "description": "本地端敏感資訊過濾機制 — Chrome MV3 瀏覽器擴充（載體一）",
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "dev": "node build.mjs --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "parity:gen": "python ../tools/gen_parity_expected.py"
+  },
+  "devDependencies": {
+    "@types/chrome": "0.0.268",
+    "esbuild": "0.21.5",
+    "typescript": "5.5.4",
+    "vitest": "1.6.0"
+  },
+  "allowScripts": {
+    "esbuild@0.21.5": true
+  }
+}
