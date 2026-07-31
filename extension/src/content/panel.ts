@@ -11,7 +11,7 @@
  */
 
 import type { Span } from '../core';
-import { riskLevel, typeLabel } from '../masking';
+import { isKnownType, riskLevel, typeLabel } from '../masking';
 
 /** 使用者在面板上做出的決定。 */
 export type PanelDecision =
@@ -92,9 +92,12 @@ const STYLE = `
 /**
  * 顯示確認面板，回傳使用者的決定。
  *
- * @param spans `detectAll` 產出的、互不重疊的 spans
+ * @param spans        `detectAll` 產出的、互不重疊的 spans
+ * @param placeholders 每個 span 預計會被換成的佔位符（與 spans 同索引）。
+ *                     刻意由呼叫端傳入而不是用 `span.replacement`——後者每次
+ *                     偵測都會重新編號，顯示出來的號碼會跟實際送出的對不上。
  */
-export function showPanel(spans: Span[]): Promise<PanelDecision> {
+export function showPanel(spans: Span[], placeholders: string[]): Promise<PanelDecision> {
   return new Promise((resolve) => {
     const host = document.createElement('div');
     host.style.cssText = 'all: initial; position: fixed; z-index: 2147483647;';
@@ -144,7 +147,10 @@ export function showPanel(spans: Span[]): Promise<PanelDecision> {
       line1.className = 'line1';
       const typeEl = document.createElement('span');
       typeEl.className = 'type';
-      typeEl.textContent = typeLabel(span.type);
+      // 語意層的類別代碼還在變動，遇到沒登記過的就標示出來讓使用者自己判斷
+      typeEl.textContent = isKnownType(span.type)
+        ? typeLabel(span.type)
+        : `${span.type}（未知類別）`;
       const badge = document.createElement('span');
       badge.className = `badge ${risk}`;
       badge.textContent = `風險 ${RISK_TEXT[risk]}`;
@@ -166,7 +172,7 @@ export function showPanel(spans: Span[]): Promise<PanelDecision> {
       arrow.textContent = '→';
       const placeholder = document.createElement('span');
       placeholder.className = 'ph';
-      placeholder.textContent = span.replacement;
+      placeholder.textContent = placeholders[index];
       line2.append(original, arrow, placeholder);
 
       body.append(line1, line2);

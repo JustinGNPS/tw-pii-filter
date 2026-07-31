@@ -17,6 +17,12 @@
 
 import { detectAll } from '../core';
 import { maskText } from '../masking';
+import {
+  PlaceholderAllocator,
+  conversationKey,
+  loadState,
+  saveState,
+} from '../placeholder';
 import { insertText, isEditable } from './insert';
 import { showPanel } from './panel';
 
@@ -37,10 +43,19 @@ async function handleText(element: HTMLElement, text: string): Promise<void> {
     return;
   }
 
+  // 以「這個對話」為單位載入配號狀態，讓同一個真值在多輪之間拿到同一個佔位符
+  const storageKey = conversationKey(new URL(location.href));
+  const state = await loadState(storageKey);
+
+  // 面板上顯示的佔位符要用「預覽」配號器算：使用者可能取消勾選某些項目，
+  // 直接在正式配號器上配會留下用不到的號碼缺口。
+  const preview = new PlaceholderAllocator(structuredClone(state));
+  const previewPlaceholders = spans.map((span) => preview.allocate(span.type, span.text));
+
   panelOpen = true;
   let decision;
   try {
-    decision = await showPanel(spans);
+    decision = await showPanel(spans, previewPlaceholders);
   } finally {
     panelOpen = false;
   }
@@ -54,8 +69,12 @@ async function handleText(element: HTMLElement, text: string): Promise<void> {
       return;
     }
 
-    const { maskedText, mapping } = maskText(text, decision.spans);
+    // 正式配號只針對使用者實際勾選的項目
+    const allocator = new PlaceholderAllocator(state);
+    const { maskedText, mapping } = maskText(text, decision.spans, allocator);
     insertText(element, maskedText);
+
+    void saveState(storageKey, allocator.toState());
     void recordMapping(mapping);
   } finally {
     isInserting = false;
