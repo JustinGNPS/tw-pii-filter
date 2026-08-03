@@ -35,14 +35,15 @@ def test_healthz_不會轉發到上游(client):
     response = client.get("/healthz")
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
-    assert response.json()["mode"] == "transparent"
+    assert response.json()["mode"] == "masking"
 
 
 # ---------------------------------------------------------------- 透明轉發
 
 
 @respx.mock
-def test_轉發後上游收到的_body_與送出的完全相同(client):
+def test_上游收到的是遮蔽後的內容(client):
+    """第二版的核心驗收條件：真實個資不得離開這台機器。"""
     route = respx.post(f"{UPSTREAM}/chat/completions").mock(
         return_value=httpx.Response(200, json={"id": "chatcmpl-1"})
     )
@@ -54,9 +55,47 @@ def test_轉發後上游收到的_body_與送出的完全相同(client):
     response = client.post("/v1/chat/completions", json=payload)
 
     assert response.status_code == 200
-    assert response.json() == {"id": "chatcmpl-1"}
-    # 第一版只警告不遮蔽：個資必須原樣送出去
+    sent = route.calls.last.request.content.decode("utf-8")
+    assert "A123456789" not in sent  # 真值沒有送出去
+    assert "[TW_ID_1]" in sent  # 送出去的是佔位符
+    assert json.loads(sent)["model"] == "gpt-4.1-mini"  # 其餘欄位不受影響
+
+
+@respx.mock
+def test_沒有個資時_body_原樣轉發(client):
+    route = respx.post(f"{UPSTREAM}/chat/completions").mock(
+        return_value=httpx.Response(200, json={})
+    )
+    payload = {"model": "gpt-4.1-mini", "messages": [{"role": "user", "content": "你好"}]}
+
+    client.post("/v1/chat/completions", json=payload)
+
     assert json.loads(route.calls.last.request.content) == payload
+
+
+@respx.mock
+def test_回覆裡的佔位符會被換回真值(client):
+    """端到端：遮蔽 → 上游回覆帶佔位符 → 還原 → agent 看到真值。"""
+    respx.post(f"{UPSTREAM}/chat/completions").mock(
+        side_effect=[
+            httpx.Response(200, json={"id": "1"}),
+            httpx.Response(
+                200,
+                json={"choices": [{"message": {"content": "你說的 [TW_ID_1] 我看到了"}}]},
+            ),
+        ]
+    )
+
+    # 第一次請求建立對照：A123456789 -> [TW_ID_1]
+    client.post(
+        "/v1/chat/completions",
+        json={"messages": [{"role": "user", "content": "身分證 A123456789"}]},
+    )
+    # 第二次請求的回覆帶著佔位符
+    response = client.post("/v1/chat/completions", json={"messages": []})
+
+    content = response.json()["choices"][0]["message"]["content"]
+    assert content == "你說的 A123456789 我看到了"
 
 
 @respx.mock
@@ -114,7 +153,8 @@ def test_沒有_v1_前綴的路徑也接得住(client):
 
 
 @respx.mock
-def test_SSE_串流原樣穿透(client):
+def test_沒有對照表時_SSE_原樣穿透(client):
+    """對照表是空的就不必重新序列化，維持位元組層級的透明。"""
     body = (
         b'data: {"choices":[{"delta":{"content":"Hello"}}]}\n\n'
         b'data: {"choices":[{"delta":{"content":" world"}}]}\n\n'
@@ -133,6 +173,42 @@ def test_SSE_串流原樣穿透(client):
     assert response.status_code == 200
     assert "text/event-stream" in response.headers["content-type"]
     assert response.content == body
+
+
+@respx.mock
+def test_SSE_串流會還原被切成兩半的佔位符(client):
+    """最關鍵的整合測試：跨事件的佔位符要能接回來。"""
+    stream = (
+        b'data: {"choices":[{"delta":{"content":"\\u4f60\\u7684 [TW"}}]}\n\n'
+        b'data: {"choices":[{"delta":{"content":"_ID_1] \\u5df2\\u6536\\u5230"}}]}\n\n'
+        b"data: [DONE]\n\n"
+    )
+    respx.post(f"{UPSTREAM}/chat/completions").mock(
+        side_effect=[
+            httpx.Response(200, json={"id": "1"}),
+            httpx.Response(
+                200, headers={"content-type": "text/event-stream"}, content=stream
+            ),
+        ]
+    )
+
+    client.post(
+        "/v1/chat/completions",
+        json={"messages": [{"role": "user", "content": "身分證 A123456789"}]},
+    )
+    response = client.post(
+        "/v1/chat/completions", json={"messages": [], "stream": True}
+    )
+
+    # 模擬 agent：把所有 delta 拼回完整文字
+    text = ""
+    for line in response.content.decode("utf-8").split("\n"):
+        if not line.startswith("data: ") or line[6:].strip() == "[DONE]":
+            continue
+        for choice in json.loads(line[6:]).get("choices", []):
+            text += choice.get("delta", {}).get("content", "")
+
+    assert text == "你的 A123456789 已收到"
 
 
 # ---------------------------------------------- detector：payload 欄位萃取
