@@ -58,6 +58,20 @@ Agent（Aider / Cline / Continue / Codex / OpenCode）
 但職稱本身不是個資。遮掉它對隱私沒有幫助，卻會讓 agent 讀不懂上下文。
 預設跳過，可用 `PII_SKIP_TYPES` 調整（見下方環境變數表）。
 
+### 還原涵蓋文字回覆與工具呼叫兩種路徑
+
+AI 有兩種方式把「要怎麼改檔案」告訴 agent：**純文字回覆**（`delta.content`，
+Aider 這類 diff-edit 工具走這條）或 **function calling**（`delta.tool_calls[]
+.function.arguments`，OpenCode 這類用內建編輯工具的 agent 走這條）。兩條路徑
+都會被 `SSERestorer` 還原；同一回覆裡可能同時有多個工具呼叫在串流，各自
+用 `index` 維護獨立的 buffer，避免內容互相插斷拼錯。
+
+⚠️ **這是實測跑出來的教訓，不是預先設計好的**：第一版只處理了
+`delta.content`，用 OpenCode 端到端測試時發現使用者的檔案被寫進
+`[TW_ID_1]` 這類佔位符——因為 OpenCode 用 function calling 編輯檔案，
+內容根本沒經過當時唯一會檢查的那個欄位。log 當下顯示「還原 0 筆」，
+這個訊號本身就是破案關鍵。詳見 `docs/B_design.md`「已知限制」一節。
+
 ### 語意層（D 的 NER）：預設關閉，選配開啟
 
 `proxy/detector.py` 已接上 `core.ner.detect_ner()`，會把語意層結果當
