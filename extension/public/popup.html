@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="utf-8" />
+    <title>本地端敏感資訊過濾</title>
+    <style>
+      * { box-sizing: border-box; }
+      body {
+        width: 420px; margin: 0; padding: 14px;
+        font-family: -apple-system, "Segoe UI", "Microsoft JhengHei", sans-serif;
+        font-size: 13px; color: #0f172a; background: #fff;
+      }
+      h1 { margin: 0 0 2px; font-size: 14px; font-weight: 650; }
+      .sub { margin: 0 0 10px; font-size: 11.5px; color: #64748b; line-height: 1.5; }
+      textarea {
+        width: 100%; height: 110px; padding: 9px; resize: vertical;
+        border: 1px solid #cbd5e1; border-radius: 8px;
+        font-family: inherit; font-size: 12.5px; line-height: 1.6;
+      }
+      textarea:focus { outline: 2px solid #2563eb; outline-offset: -1px; border-color: transparent; }
+      .bar { display: flex; align-items: center; gap: 8px; margin: 9px 0; }
+      button {
+        font: inherit; font-size: 12.5px; font-weight: 600; padding: 7px 13px;
+        border-radius: 7px; border: 1px solid transparent; cursor: pointer;
+      }
+      .primary { background: #2563eb; color: #fff; }
+      .primary:hover { background: #1d4ed8; }
+      .ghost { background: #fff; color: #334155; border-color: #cbd5e1; }
+      .ghost:hover { background: #f1f5f9; }
+      .stat { margin-left: auto; font-size: 11.5px; color: #64748b; }
+      .stat b { color: #0f172a; }
+      h2 { margin: 12px 0 5px; font-size: 11.5px; font-weight: 650; color: #64748b; letter-spacing: .04em; }
+      .rows { border: 1px solid #e2e8f0; border-radius: 8px; overflow: hidden; }
+      .row { display: flex; align-items: baseline; gap: 7px; padding: 7px 9px; }
+      .row + .row { border-top: 1px solid #f1f5f9; }
+      .badge { font-size: 10px; font-weight: 600; padding: 1.5px 6px; border-radius: 999px; flex: none; }
+      .badge.high { background: #fee2e2; color: #b91c1c; }
+      .badge.medium { background: #fef3c7; color: #b45309; }
+      .badge.low { background: #e0e7ff; color: #4338ca; }
+      .val { font-family: ui-monospace, Consolas, monospace; font-size: 11.5px; word-break: break-all; }
+      .ph { color: #2563eb; font-weight: 600; }
+      .muted { color: #94a3b8; }
+      pre {
+        margin: 0; padding: 9px; background: #f8fafc; border: 1px solid #e2e8f0;
+        border-radius: 8px; font-size: 11.5px; line-height: 1.6;
+        white-space: pre-wrap; word-break: break-all; max-height: 130px; overflow-y: auto;
+      }
+      .empty { padding: 12px; text-align: center; color: #94a3b8; font-size: 12px; }
+      footer { margin-top: 11px; padding-top: 9px; border-top: 1px solid #e2e8f0;
+               font-size: 10.5px; color: #94a3b8; line-height: 1.5; }
+    </style>
+  </head>
+  <body>
+    <h1>本地端敏感資訊過濾</h1>
+    <p class="sub">貼上或輸入文字，立即在本地端檢查是否含台灣個資。資料不會離開這台電腦。</p>
+
+    <textarea id="input" placeholder="在這裡貼上要檢查的文字…"></textarea>
+
+    <div class="bar">
+      <button class="primary" id="scan">掃描</button>
+      <button class="ghost" id="sample">載入範例</button>
+      <span class="stat" id="stat"></span>
+    </div>
+
+    <div id="result"></div>
+
+    <footer>規則層（checksum）在本地執行，偵測邏輯與 proxy 端共用同一套規則並由一致性測試把關。</footer>
+
+    <script src="popup.js"></script>
+  </body>
+</html>
