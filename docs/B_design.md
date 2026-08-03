@@ -262,19 +262,45 @@ D 實測 recall 92.7%）該分開講的原因 —— 混在一起講反而站不
 
 | Agent | 指向方式 | 狀態 |
 |---|---|---|
-| Aider | `OPENAI_API_BASE` | **已實測通過** |
+| Aider | `OPENAI_API_BASE` | **已實測通過**（純文字 diff 編輯） |
+| OpenCode | `opencode.json` 自訂 provider（`@ai-sdk/openai-compatible`） | **已實測通過**（function calling 編輯，過程中挖出並修好還原機制的一個洞，見下） |
 | Continue | 設定檔 `apiBase` | 預期可用，待測 |
 | Cline | 選 OpenAI Compatible | 預期可用，待測 |
-| OpenCode | 設定檔 base URL | 預期可用，待測 |
 | Codex | 設定檔自訂 provider | 協定略有差異，`detector.py` 可能需擴充 |
 | Claude Code | `ANTHROPIC_BASE_URL` | Anthropic 格式，欄位位置不同，需擴充 |
 | **Cursor** | — | **不支援**（見上） |
 
 「需擴充」只涉及 `proxy/detector.py` 的 `extract_texts()` ——
 不同協定把使用者內容放在 JSON 的不同位置。`main.py`、`forward.py`、
-還原邏輯、對照表**完全不需更動**。
+對照表**完全不需更動**；還原邏輯原本也以為不用動，直到 OpenCode 測出下面這個洞。
 
 > 定位：**一個載體，配幾個小轉接頭**，不是六個載體。
+
+### 🔴 OpenCode 實測挖出的洞：還原只認文字回覆，沒讀過工具呼叫
+
+AI 讓 agent 知道「要怎麼改檔案」有兩種方式：**純文字回覆**
+（`delta.content`，Aider 這類走 diff-edit 格式的工具用這條）、
+**function calling**（`delta.tool_calls[].function.arguments`，OpenCode
+這類用內建編輯工具的 agent 走這條）。`proxy/restorer.py` 的
+`SSERestorer` 一開始只處理了 `delta.content`——不是轉換邏輯寫錯，是這段
+程式碼從來沒讀過 `tool_calls` 這個欄位。
+
+實測用 OpenCode 叫它改一個含假身分證字號的檔案時，**磁碟上的檔案被寫入
+了 `[TW_ID_1]` 這類佔位符，不是真值**。比「沒遮到」更糟——沒遮到只是那次
+沒受保護，這個是把錯誤內容實際寫進使用者的檔案，跟第一版遮蔽不還原時
+Aider 壞掉是同一類問題，只是這次是靜默發生，連錯誤訊息都沒有（log 只是
+平淡地顯示「還原 0 筆」）。
+
+**修法**：`SSERestorer` 新增處理 `tool_calls[].function.arguments`，用
+`index` 幫每個工具呼叫維護獨立的 buffer（同一回覆可能同時有多個工具呼叫
+在串流，例如一次改兩個檔案，共用一個 buffer 會把不同呼叫的內容拼錯）。
+修復前用隔離測試（不打真實 API）先確認根因，修完後重跑真實 OpenCode
+端到端：磁碟檔案完全乾淨，log 出現「還原 32 筆」。詳見 PR #11。
+
+**這件事的啟示**：agent 相容性不能只看「能不能連上、送不送得出去」，
+**編輯機制本身（純文字 vs. function calling）會影響還原這一側走的是哪條
+程式碼路徑**。後續測 Continue / Cline / Codex / Claude Code 時，這是
+優先要確認的事——它們是走文字回覆還是工具呼叫。
 
 ---
 
