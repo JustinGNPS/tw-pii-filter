@@ -207,15 +207,21 @@ agent 每次請求都重送整段對話歷史，同一份檔案內容會被重�
 
 新增 `PII_ENABLE_NER` 環境變數，**預設關閉**：
 
-- 語意層單次推論（CPU）約 742 ms，是規則層（2〜4 ms）的百倍以上，且是同步
-  阻塞呼叫；開著會讓每個請求都平白付這筆延遲
+- 語意層單次推論（CPU）約 **2412 ms**，是規則層（2〜4 ms）的六百多倍，且是
+  同步阻塞呼叫；開著會讓每個請求都平白付這筆延遲。**這個數字修正過一次**：
+  最初測到的 742 ms 其實是「沒掃完整份文字」測出來的假快——D 後來發現
+  `bert-base-chinese` 有 512 token 上限，超過的內容被 pipeline 靜默截斷
+  （症狀正是 FN 集中在檔案後段），修好截斷後重新量測才是 2412 ms 這個
+  真數字（見 PR #15）。**742 ms 這個數字已作廢**，本文件與 `proxy/README.md`
+  先前引用過，已一併更新
 - `core.ner.detector` 內部會 `import torch` / `transformers`，屬於 GB 等級的
   重量級套件；關閉時 proxy 完全不 import 這個模組，不強迫沒有語意層需求的人安裝
 
 開啟語意層後，`_mask_request`（原本是同步函式，直接在 async 的請求處理裡
-被呼叫）改用 `asyncio.to_thread` 丟到背景執行緒，避免 742 ms 的同步阻塞卡住
+被呼叫）改用 `asyncio.to_thread` 丟到背景執行緒，避免這筆同步阻塞卡住
 同一個 proxy 行程裡其他請求排隊等它。規則層單獨運作時這筆改動感覺不出差別
-（本來就快），但語意層一開就是必要的。
+（本來就快），但語意層一開就是必要的——2412 ms 比早先以為的 742 ms 更嚴重，
+這個決定因此更加正確。
 
 用真實模型（非 mock）跑過一次端到端驗證：規則層與語意層的結果正確合併，
 `position`（職稱）依約定不遮蔽，`NAME`/`ADDRESS` 正確遮蔽並完整還原，
@@ -277,10 +283,12 @@ BYOK 模式下可以被攔，登入代管方案的那個使用情境依然攔不
 的數字，且維持不變 —— 規則層預設永遠開，這是本專題相對 Presidio / GLiNER
 等工具的核心優勢（確定性偵測、有 checksum、幾乎不漏）。
 
-語意層（`PII_ENABLE_NER=1`）接入後，單次推論（CPU）約 742 ms，是規則層的
-百倍以上，且預設**關閉**（見決定 10）。兩層數字性質不同，評審若問「會不會
+語意層（`PII_ENABLE_NER=1`）接入後，單次推論（CPU）約 **2412 ms**，是規則層
+的六百多倍，且預設**關閉**（見決定 10）。兩層數字性質不同，評審若問「會不會
 漏」時，這正是規則層（確定性、recall 接近 100%）與語意層（機率性、
-D 實測 recall 92.7%）該分開講的原因 —— 混在一起講反而站不住腳。
+D 修好 512 token 截斷問題後重新實測 **recall 97.6%**，比修之前的 92.7% 更好，
+因為之前漏的那些有一部分正是被靜默截斷、根本沒進模型的內容）該分開講的
+原因 —— 混在一起講反而站不住腳。
 
 ---
 
@@ -288,15 +296,18 @@ D 實測 recall 92.7%）該分開講的原因 —— 混在一起講反而站不
 
 同一套 proxy 應付多款 agent，差別只在「怎麼告訴它 base URL 換了」。
 
-| Agent | 指向方式 | 狀態 |
-|---|---|---|
-| Aider | `OPENAI_API_BASE` | **已實測通過**（純文字 diff 編輯） |
-| OpenCode | `opencode.json` 自訂 provider（`@ai-sdk/openai-compatible`） | **已實測通過**（function calling 編輯，過程中挖出並修好還原機制的一個洞，見下） |
-| Continue | `~/.continue/config.yaml` 自訂 `provider: openai` + `apiBase` | **已實測通過**（同樣是 function calling 編輯，再次驗證 tool_calls 還原修復不是只對 OpenCode 有效） |
-| Cline | 選 OpenAI Compatible | 預期可用，待測 |
-| Codex | 設定檔自訂 provider | 協定略有差異，`detector.py` 可能需擴充 |
-| Claude Code | `ANTHROPIC_BASE_URL` | Anthropic 格式，欄位位置不同，需擴充 |
-| **Cursor** | — | **不支援**（見上） |
+| Agent | 指向方式 | 編輯機制 | 狀態 |
+|---|---|---|---|
+| Aider | `OPENAI_API_BASE` | 純文字回覆（diff-edit） | **已實測通過** |
+| OpenCode | `opencode.json` 自訂 provider（`@ai-sdk/openai-compatible`） | function calling | **已實測通過**（過程中挖出並修好還原機制的一個洞，見下） |
+| Continue | `~/.continue/config.yaml` 自訂 `provider: openai` + `apiBase` | function calling | **已實測通過**（再次驗證 tool_calls 還原修復不是只對 OpenCode 有效） |
+| Cline | GUI 設定選 **OpenAI Compatible**，填 Base URL/API Key/Model | function calling | **已實測通過**（第三款驗證同一個修復） |
+| Codex | 設定檔自訂 provider | 待確認 | 協定略有差異，`detector.py` 可能需擴充；測之前先確認走的是 `tool_calls` 還是別的欄位結構 |
+| Claude Code | `ANTHROPIC_BASE_URL` | Anthropic Messages API（欄位結構完全不同） | Anthropic 格式，`extract_texts()` 需擴充才能用，目前**攔不到**，不是測試問題 |
+| **Cursor** | — | 廠商代管後端，無自訂位址欄位 | **不支援**（見上「BYOK vs. 代管帳號」） |
+
+「編輯機制」這一欄是 OpenCode 測試後才加的——它正是還原邏輯要走哪條
+程式碼路徑的決定因素（見下），後續驗證新 agent 時應該優先確認這一欄。
 
 「需擴充」只涉及 `proxy/detector.py` 的 `extract_texts()` ——
 不同協定把使用者內容放在 JSON 的不同位置。`main.py`、`forward.py`、
