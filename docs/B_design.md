@@ -264,7 +264,7 @@ D 實測 recall 92.7%）該分開講的原因 —— 混在一起講反而站不
 |---|---|---|
 | Aider | `OPENAI_API_BASE` | **已實測通過**（純文字 diff 編輯） |
 | OpenCode | `opencode.json` 自訂 provider（`@ai-sdk/openai-compatible`） | **已實測通過**（function calling 編輯，過程中挖出並修好還原機制的一個洞，見下） |
-| Continue | 設定檔 `apiBase` | 預期可用，待測 |
+| Continue | `~/.continue/config.yaml` 自訂 `provider: openai` + `apiBase` | **已實測通過**（同樣是 function calling 編輯，再次驗證 tool_calls 還原修復不是只對 OpenCode 有效） |
 | Cline | 選 OpenAI Compatible | 預期可用，待測 |
 | Codex | 設定檔自訂 provider | 協定略有差異，`detector.py` 可能需擴充 |
 | Claude Code | `ANTHROPIC_BASE_URL` | Anthropic 格式，欄位位置不同，需擴充 |
