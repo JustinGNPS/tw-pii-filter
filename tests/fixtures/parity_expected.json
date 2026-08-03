@@ -1,0 +1,504 @@
+[
+  {
+    "text": "王小明的身分證字號是 A123456789，信箱是 test@example.com",
+    "spans": [
+      {
+        "start": 11,
+        "end": 21,
+        "type": "TW_ID",
+        "text": "A123456789",
+        "confidence": 0.99,
+        "source": "rule",
+        "replacement": "[TW_ID_1]"
+      },
+      {
+        "start": 26,
+        "end": 42,
+        "type": "EMAIL",
+        "text": "test@example.com",
+        "confidence": 0.95,
+        "source": "rule",
+        "replacement": "[EMAIL_1]"
+      }
+    ]
+  },
+  {
+    "text": "身分證 A123456789 與 A123456780 只有一碼之差",
+    "spans": [
+      {
+        "start": 4,
+        "end": 14,
+        "type": "TW_ID",
+        "text": "A123456789",
+        "confidence": 0.99,
+        "source": "rule",
+        "replacement": "[TW_ID_1]"
+      }
+    ]
+  },
+  {
+    "text": "客戶身分證：F131104093、H224567890、J101234567",
+    "spans": [
+      {
+        "start": 6,
+        "end": 16,
+        "type": "TW_ID",
+        "text": "F131104093",
+        "confidence": 0.99,
+        "source": "rule",
+        "replacement": "[TW_ID_1]"
+      }
+    ]
+  },
+  {
+    "text": "沒有任何敏感資訊的一段普通中文句子。",
+    "spans": []
+  },
+  {
+    "text": "",
+    "spans": []
+  },
+  {
+    "text": "公司統編 12345675，另一家是 04595257",
+    "spans": [
+      {
+        "start": 5,
+        "end": 13,
+        "type": "TW_TAX",
+        "text": "12345675",
+        "confidence": 0.95,
+        "source": "rule",
+        "replacement": "[TW_TAX_1]"
+      },
+      {
+        "start": 19,
+        "end": 27,
+        "type": "TW_TAX",
+        "text": "04595257",
+        "confidence": 0.95,
+        "source": "rule",
+        "replacement": "[TW_TAX_2]"
+      }
+    ]
+  },
+  {
+    "text": "統編第七碼特例測試 10458574 與 12345676",
+    "spans": [
+      {
+        "start": 10,
+        "end": 18,
+        "type": "TW_TAX",
+        "text": "10458574",
+        "confidence": 0.95,
+        "source": "rule",
+        "replacement": "[TW_TAX_1]"
+      },
+      {
+        "start": 21,
+        "end": 29,
+        "type": "TW_TAX",
+        "text": "12345676",
+        "confidence": 0.95,
+        "source": "rule",
+        "replacement": "[TW_TAX_2]"
+      }
+    ]
+  },
+  {
+    "text": "健保卡號 000012345678，卡號後面接著文字",
+    "spans": [
+      {
+        "start": 5,
+        "end": 17,
+        "type": "TW_NHI",
+        "text": "000012345678",
+        "confidence": 0.6,
+        "source": "rule",
+        "replacement": "[TW_NHI_1]"
+      }
+    ]
+  },
+  {
+    "text": "手機 0912345678、0912-345-678、0912345679",
+    "spans": [
+      {
+        "start": 3,
+        "end": 13,
+        "type": "TW_PHONE_M",
+        "text": "0912345678",
+        "confidence": 0.9,
+        "source": "rule",
+        "replacement": "[TW_PHONE_M_1]"
+      },
+      {
+        "start": 14,
+        "end": 26,
+        "type": "TW_PHONE_M",
+        "text": "0912-345-678",
+        "confidence": 0.9,
+        "source": "rule",
+        "replacement": "[TW_PHONE_M_2]"
+      },
+      {
+        "start": 27,
+        "end": 37,
+        "type": "TW_PHONE_M",
+        "text": "0912345679",
+        "confidence": 0.9,
+        "source": "rule",
+        "replacement": "[TW_PHONE_M_3]"
+      }
+    ]
+  },
+  {
+    "text": "市話 02-23456789 與 (02)2345-6789 以及 0423456789",
+    "spans": [
+      {
+        "start": 3,
+        "end": 14,
+        "type": "TW_PHONE_L",
+        "text": "02-23456789",
+        "confidence": 0.85,
+        "source": "rule",
+        "replacement": "[TW_PHONE_L_1]"
+      },
+      {
+        "start": 17,
+        "end": 30,
+        "type": "TW_PHONE_L",
+        "text": "(02)2345-6789",
+        "confidence": 0.85,
+        "source": "rule",
+        "replacement": "[TW_PHONE_L_2]"
+      },
+      {
+        "start": 34,
+        "end": 44,
+        "type": "TW_PHONE_L",
+        "text": "0423456789",
+        "confidence": 0.85,
+        "source": "rule",
+        "replacement": "[TW_PHONE_L_3]"
+      }
+    ]
+  },
+  {
+    "text": "聯絡我 a0912345678@gmail.com",
+    "spans": [
+      {
+        "start": 4,
+        "end": 25,
+        "type": "EMAIL",
+        "text": "a0912345678@gmail.com",
+        "confidence": 0.95,
+        "source": "rule",
+        "replacement": "[EMAIL_1]"
+      }
+    ]
+  },
+  {
+    "text": "信箱 user.name+tag@sub.domain.co.uk 與 bad@@example.com",
+    "spans": [
+      {
+        "start": 3,
+        "end": 33,
+        "type": "EMAIL",
+        "text": "user.name+tag@sub.domain.co.uk",
+        "confidence": 0.95,
+        "source": "rule",
+        "replacement": "[EMAIL_1]"
+      }
+    ]
+  },
+  {
+    "text": "信用卡 4111111111111111 與 4111 1111 1111 1111",
+    "spans": [
+      {
+        "start": 4,
+        "end": 20,
+        "type": "CREDIT_CARD",
+        "text": "4111111111111111",
+        "confidence": 0.95,
+        "source": "rule",
+        "replacement": "[CREDIT_CARD_1]"
+      },
+      {
+        "start": 23,
+        "end": 42,
+        "type": "CREDIT_CARD",
+        "text": "4111 1111 1111 1111",
+        "confidence": 0.95,
+        "source": "rule",
+        "replacement": "[CREDIT_CARD_2]"
+      }
+    ]
+  },
+  {
+    "text": "信用卡 4111-1111-1111-1112 這張是錯的",
+    "spans": []
+  },
+  {
+    "text": "API_KEY=sk-abcdefghijklmnopqrstuvwx1234",
+    "spans": [
+      {
+        "start": 8,
+        "end": 39,
+        "type": "API_KEY",
+        "text": "sk-abcdefghijklmnopqrstuvwx1234",
+        "confidence": 0.9,
+        "source": "rule",
+        "replacement": "[API_KEY_1]"
+      }
+    ]
+  },
+  {
+    "text": "token=abcdef123456 password='p@ssw0rd123'",
+    "spans": [
+      {
+        "start": 6,
+        "end": 18,
+        "type": "API_KEY",
+        "text": "abcdef123456",
+        "confidence": 0.9,
+        "source": "rule",
+        "replacement": "[API_KEY_1]"
+      }
+    ]
+  },
+  {
+    "text": "sk-ant-api03-AAAAAAAAAAAAAAAAAAAAAAAAAAAA ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    "spans": [
+      {
+        "start": 0,
+        "end": 41,
+        "type": "API_KEY",
+        "text": "sk-ant-api03-AAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        "confidence": 0.9,
+        "source": "rule",
+        "replacement": "[API_KEY_1]"
+      },
+      {
+        "start": 42,
+        "end": 82,
+        "type": "API_KEY",
+        "text": "ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        "confidence": 0.9,
+        "source": "rule",
+        "replacement": "[API_KEY_2]"
+      }
+    ]
+  },
+  {
+    "text": "AKIAIOSFODNN7EXAMPLE 與 AIzaSyAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    "spans": [
+      {
+        "start": 0,
+        "end": 20,
+        "type": "API_KEY",
+        "text": "AKIAIOSFODNN7EXAMPLE",
+        "confidence": 0.9,
+        "source": "rule",
+        "replacement": "[API_KEY_1]"
+      },
+      {
+        "start": 23,
+        "end": 60,
+        "type": "API_KEY",
+        "text": "AIzaSyAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        "confidence": 0.9,
+        "source": "rule",
+        "replacement": "[API_KEY_2]"
+      }
+    ]
+  },
+  {
+    "text": "JWT eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.dBjftJeZ4CVPmB92K27uhbUJU1p1r_wW1gFWFOEjXk",
+    "spans": [
+      {
+        "start": 4,
+        "end": 83,
+        "type": "API_KEY",
+        "text": "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.dBjftJeZ4CVPmB92K27uhbUJU1p1r_wW1gFWFOEjXk",
+        "confidence": 0.9,
+        "source": "rule",
+        "replacement": "[API_KEY_1]"
+      }
+    ]
+  },
+  {
+    "text": "病歷摘要：病患 A123456789，聯絡 0912345678，住台北市，信箱 patient@hospital.tw",
+    "spans": [
+      {
+        "start": 8,
+        "end": 18,
+        "type": "TW_ID",
+        "text": "A123456789",
+        "confidence": 0.99,
+        "source": "rule",
+        "replacement": "[TW_ID_1]"
+      },
+      {
+        "start": 22,
+        "end": 32,
+        "type": "TW_PHONE_M",
+        "text": "0912345678",
+        "confidence": 0.9,
+        "source": "rule",
+        "replacement": "[TW_PHONE_M_1]"
+      },
+      {
+        "start": 41,
+        "end": 60,
+        "type": "EMAIL",
+        "text": "patient@hospital.tw",
+        "confidence": 0.95,
+        "source": "rule",
+        "replacement": "[EMAIL_1]"
+      }
+    ]
+  },
+  {
+    "text": "履歷：陳大文，統編 12345675，手機 0987654321，email chen@company.com.tw",
+    "spans": [
+      {
+        "start": 10,
+        "end": 18,
+        "type": "TW_TAX",
+        "text": "12345675",
+        "confidence": 0.95,
+        "source": "rule",
+        "replacement": "[TW_TAX_1]"
+      },
+      {
+        "start": 22,
+        "end": 32,
+        "type": "TW_PHONE_M",
+        "text": "0987654321",
+        "confidence": 0.9,
+        "source": "rule",
+        "replacement": "[TW_PHONE_M_1]"
+      },
+      {
+        "start": 39,
+        "end": 58,
+        "type": "EMAIL",
+        "text": "chen@company.com.tw",
+        "confidence": 0.95,
+        "source": "rule",
+        "replacement": "[EMAIL_1]"
+      }
+    ]
+  },
+  {
+    "text": "混合 A123456789 0912345678 12345675 test@x.com 4111111111111111 全部一起",
+    "spans": [
+      {
+        "start": 3,
+        "end": 13,
+        "type": "TW_ID",
+        "text": "A123456789",
+        "confidence": 0.99,
+        "source": "rule",
+        "replacement": "[TW_ID_1]"
+      },
+      {
+        "start": 14,
+        "end": 24,
+        "type": "TW_PHONE_M",
+        "text": "0912345678",
+        "confidence": 0.9,
+        "source": "rule",
+        "replacement": "[TW_PHONE_M_1]"
+      },
+      {
+        "start": 25,
+        "end": 33,
+        "type": "TW_TAX",
+        "text": "12345675",
+        "confidence": 0.95,
+        "source": "rule",
+        "replacement": "[TW_TAX_1]"
+      },
+      {
+        "start": 34,
+        "end": 44,
+        "type": "EMAIL",
+        "text": "test@x.com",
+        "confidence": 0.95,
+        "source": "rule",
+        "replacement": "[EMAIL_1]"
+      },
+      {
+        "start": 45,
+        "end": 61,
+        "type": "CREDIT_CARD",
+        "text": "4111111111111111",
+        "confidence": 0.95,
+        "source": "rule",
+        "replacement": "[CREDIT_CARD_1]"
+      }
+    ]
+  },
+  {
+    "text": "邊界：xA123456789 與 A1234567890 都不該被抓",
+    "spans": []
+  },
+  {
+    "text": "邊界：手機前後接數字 10912345678 與 09123456789",
+    "spans": []
+  },
+  {
+    "text": "全形數字 Ａ１２３４５６７８９ 與全形手機 ０９１２３４５６７８",
+    "spans": []
+  },
+  {
+    "text": "換行\n身分證 A123456789\n手機 0912345678\n結束",
+    "spans": [
+      {
+        "start": 7,
+        "end": 17,
+        "type": "TW_ID",
+        "text": "A123456789",
+        "confidence": 0.99,
+        "source": "rule",
+        "replacement": "[TW_ID_1]"
+      },
+      {
+        "start": 21,
+        "end": 31,
+        "type": "TW_PHONE_M",
+        "text": "0912345678",
+        "confidence": 0.9,
+        "source": "rule",
+        "replacement": "[TW_PHONE_M_1]"
+      }
+    ]
+  },
+  {
+    "text": "重複同值 A123456789 又出現一次 A123456789",
+    "spans": [
+      {
+        "start": 5,
+        "end": 15,
+        "type": "TW_ID",
+        "text": "A123456789",
+        "confidence": 0.99,
+        "source": "rule",
+        "replacement": "[TW_ID_1]"
+      },
+      {
+        "start": 22,
+        "end": 32,
+        "type": "TW_ID",
+        "text": "A123456789",
+        "confidence": 0.99,
+        "source": "rule",
+        "replacement": "[TW_ID_2]"
+      }
+    ]
+  },
+  {
+    "text": "半形括號市話 (02) 2345 6789 與 02 2345 6789",
+    "spans": []
+  }
+]

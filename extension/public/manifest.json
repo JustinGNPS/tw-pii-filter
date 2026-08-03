@@ -1,0 +1,33 @@
+{
+  "manifest_version": 3,
+  "name": "本地端敏感資訊過濾機制",
+  "version": "0.1.0",
+  "description": "貼上文字到 AI 網頁前，於本地端偵測台灣個資（身分證、統編、健保卡等）並提示遮蔽。資料不經任何第三方伺服器。",
+  "permissions": ["contextMenus", "storage"],
+  "host_permissions": [
+    "https://chatgpt.com/*",
+    "https://chat.openai.com/*",
+    "https://claude.ai/*",
+    "https://gemini.google.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://chatgpt.com/*",
+        "https://chat.openai.com/*",
+        "https://claude.ai/*",
+        "https://gemini.google.com/*"
+      ],
+      "js": ["content.js"],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ],
+  "action": {
+    "default_title": "本地端敏感資訊過濾",
+    "default_popup": "popup.html"
+  }
+}

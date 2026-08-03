@@ -1,0 +1,113 @@
+/**
+ * 遮蔽與對照表建立。
+ *
+ * 依照專題規劃「第一版只做偵測 + 警告，第二版才做還原」的分階段策略，
+ * 這裡負責的是**送出前**的遮蔽：把偵測到的 span 換成佔位符，並同時
+ * 產出本地對照表供第二版的還原機制使用（對照表絕不外傳）。
+ *
+ * ⚠️ 佔位符**不使用** `span.replacement`，改由 {@link PlaceholderAllocator} 配號，
+ * 原因見 `src/placeholder.ts` 的說明（`detect_all()` 每次重新編號，跨次呼叫
+ * 會讓同一個號碼對到不同真值）。
+ */
+
+import type { PiiType, Span } from './core';
+import { PlaceholderAllocator } from './placeholder';
+
+/** 風險等級，用於確認面板的視覺提示。 */
+export type RiskLevel = 'high' | 'medium' | 'low';
+
+/**
+ * 各類別的風險等級與中文顯示名稱。
+ *
+ * 風險等級的判斷依據是「洩漏後的後果嚴重度」，不是偵測信心：
+ * 身分證、統編、信用卡、金鑰一旦外流無法挽回，列為高風險；
+ * 電話、健保卡號屬於可識別但衝擊較低，列為中風險。
+ */
+const TYPE_META: Record<string, { label: string; risk: RiskLevel }> = {
+  // ── Layer 1 規則層 ──
+  TW_ID: { label: '身分證字號', risk: 'high' },
+  TW_TAX: { label: '統一編號', risk: 'high' },
+  CREDIT_CARD: { label: '信用卡號', risk: 'high' },
+  API_KEY: { label: 'API 金鑰 / Token', risk: 'high' },
+  TW_NHI: { label: '健保卡號', risk: 'medium' },
+  TW_PHONE_M: { label: '手機號碼', risk: 'medium' },
+  TW_PHONE_L: { label: '市內電話', risk: 'medium' },
+  EMAIL: { label: '電子郵件', risk: 'low' },
+
+  // ── Layer 2 語意層（代碼尚未定案，PR #3 討論中，兩套命名都先支援）──
+  name: { label: '人名', risk: 'medium' },
+  address: { label: '地址 / 地點', risk: 'medium' },
+  // position（職稱）本身通常不是個資，但在準識別子組合下會提高再識別風險，
+  // 因此保留偵測但列為低風險，預設由使用者自行決定要不要遮蔽。
+  position: { label: '職稱', risk: 'low' },
+  PERSON: { label: '人名', risk: 'medium' },
+  LOCATION: { label: '地址 / 地點', risk: 'medium' },
+  ORG: { label: '機構名稱', risk: 'low' },
+};
+
+/** 語意層代碼還在變動，遇到沒見過的一律照原樣顯示、不要壞掉。 */
+export function typeLabel(type: PiiType): string {
+  return TYPE_META[type]?.label ?? type;
+}
+
+export function riskLevel(type: PiiType): RiskLevel {
+  return TYPE_META[type]?.risk ?? 'medium';
+}
+
+/** 這個代碼是不是我們認識的（否則面板會標示「未知類別」提醒使用者自行判斷）。 */
+export function isKnownType(type: PiiType): boolean {
+  return type in TYPE_META;
+}
+
+/** 對照表的一筆紀錄：佔位符 ↔ 原文。第二版還原機制會用到。 */
+export interface MappingEntry {
+  placeholder: string;
+  original: string;
+  type: PiiType;
+}
+
+export interface MaskResult {
+  /** 遮蔽後、實際會送給 AI 的文字 */
+  maskedText: string;
+  /** 佔位符 → 原文的對照表（僅存本地） */
+  mapping: MappingEntry[];
+}
+
+/**
+ * 依 spans 把原文遮蔽成佔位符版本。
+ *
+ * @param text      原始文字
+ * @param spans     要遮蔽的 spans；必須互不重疊（`detectAll` 已保證）。
+ *                  若呼叫端只勾選了部分項目，傳入篩選後的子集即可
+ * @param allocator 佔位符配號器。傳入同一個 allocator 就能讓多次貼上、
+ *                  多輪對話之間「同一個真值永遠對到同一個佔位符」
+ *
+ * 實作要點：由後往前替換，避免前面的替換改變後面 span 的 offset。
+ */
+export function maskText(
+  text: string,
+  spans: Span[],
+  allocator: PlaceholderAllocator = new PlaceholderAllocator(),
+): MaskResult {
+  const sorted = [...spans].sort((a, b) => a.start - b.start || a.end - b.end);
+
+  // 先一次配完號：同值必同碼由 allocator 保證（含跨次呼叫）
+  const placeholders = sorted.map((span) => allocator.allocate(span.type, span.text));
+
+  let maskedText = text;
+  for (let i = sorted.length - 1; i >= 0; i -= 1) {
+    const span = sorted[i];
+    maskedText = maskedText.slice(0, span.start) + placeholders[i] + maskedText.slice(span.end);
+  }
+
+  const mapping: MappingEntry[] = [];
+  const seen = new Set<string>();
+  sorted.forEach((span, i) => {
+    const placeholder = placeholders[i];
+    if (seen.has(placeholder)) return;
+    seen.add(placeholder);
+    mapping.push({ placeholder, original: span.text, type: span.type });
+  });
+
+  return { maskedText, mapping };
+}
