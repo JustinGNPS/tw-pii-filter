@@ -10,7 +10,7 @@ import { describe, expect, it } from 'vitest';
 
 import { detectAll } from '../src/core';
 import { maskText } from '../src/masking';
-import { PlaceholderAllocator } from '../src/placeholder';
+import { FALLBACK_TYPE, PlaceholderAllocator, normalizeType } from '../src/placeholder';
 
 /** 兩個 checksum 正確的身分證，只是在兩段文字裡出現順序相反。 */
 const ID_A = 'A123456789';
@@ -105,32 +105,80 @@ describe('PlaceholderAllocator', () => {
   });
 });
 
-describe('語意層類別代碼（Layer 2 尚未定案）', () => {
-  it('未知代碼不會讓遮蔽壞掉，照樣配號與替換', () => {
-    const text = '王小明住在台北市';
-    const spans = [
+describe('語意層類別代碼', () => {
+  const nerSpans = [
+    {
+      start: 0,
+      end: 3,
+      type: 'NAME',
+      text: '王小明',
+      confidence: 0.98,
+      source: 'model' as const,
+      replacement: '[NAME_1]',
+    },
+    {
+      start: 5,
+      end: 8,
+      type: 'ADDRESS',
+      text: '台北市',
+      confidence: 0.91,
+      source: 'model' as const,
+      replacement: '[ADDRESS_1]',
+    },
+  ];
+
+  it('語意層的 spans 照樣配號與替換', () => {
+    const { maskedText, mapping } = maskText('王小明住在台北市', nerSpans);
+    expect(maskedText).toBe('[NAME_1]住在[ADDRESS_1]');
+    expect(mapping.map((entry) => entry.type)).toEqual(['NAME', 'ADDRESS']);
+  });
+
+  it('未登記的代碼不會讓遮蔽壞掉', () => {
+    const text = '某個新類別';
+    const { maskedText } = maskText(text, [
       {
         start: 0,
-        end: 3,
-        type: 'name',
-        text: '王小明',
-        confidence: 0.98,
+        end: 2,
+        type: 'BRAND_NEW_TYPE',
+        text: '某個',
+        confidence: 0.8,
         source: 'model' as const,
-        replacement: '[name_1]',
+        replacement: '[BRAND_NEW_TYPE_1]',
       },
-      {
-        start: 5,
-        end: 8,
-        type: 'address',
-        text: '台北市',
-        confidence: 0.91,
-        source: 'model' as const,
-        replacement: '[address_1]',
-      },
-    ];
+    ]);
+    expect(maskedText).toBe('[BRAND_NEW_TYPE_1]新類別');
+  });
+});
 
-    const { maskedText, mapping } = maskText(text, spans);
-    expect(maskedText).toBe('[name_1]住在[address_1]');
-    expect(mapping.map((entry) => entry.type)).toEqual(['name', 'address']);
+describe('normalizeType（與 proxy 的 mapping.normalize_type 對應）', () => {
+  it('小寫代碼轉成大寫，避免產生 proxy 還原不了的佔位符', () => {
+    expect(normalizeType('name')).toBe('NAME');
+    expect(normalizeType('address')).toBe('ADDRESS');
+  });
+
+  it('規則層既有的大寫代碼維持原樣（底線不可被吃掉）', () => {
+    for (const type of ['TW_ID', 'TW_TAX', 'TW_NHI', 'TW_PHONE_M', 'TW_PHONE_L', 'EMAIL', 'CREDIT_CARD', 'API_KEY']) {
+      expect(normalizeType(type)).toBe(type);
+    }
+  });
+
+  it('型別裡的數字會被清掉（佔位符用底線分隔型別與序號，型別含數字會無法反解）', () => {
+    expect(normalizeType('ADDRESS2')).toBe('ADDRESS');
+  });
+
+  it('空值或無法正規化的輸入退回 PII', () => {
+    expect(normalizeType('')).toBe(FALLBACK_TYPE);
+    expect(normalizeType(null)).toBe(FALLBACK_TYPE);
+    expect(normalizeType(undefined)).toBe(FALLBACK_TYPE);
+    expect(normalizeType('123')).toBe(FALLBACK_TYPE);
+  });
+
+  it('大小寫不同的同一型別共用計數器，不會產生兩個 [NAME_1] 指向不同的人', () => {
+    const allocator = new PlaceholderAllocator();
+    expect(allocator.allocate('name', '王小明')).toBe('[NAME_1]');
+    expect(allocator.allocate('NAME', '陳大同')).toBe('[NAME_2]');
+    // 同一個真值不論用哪種寫法傳進來，都拿到同一個佔位符
+    expect(allocator.allocate('NAME', '王小明')).toBe('[NAME_1]');
+    expect(allocator.allocate('name', '王小明')).toBe('[NAME_1]');
   });
 });
