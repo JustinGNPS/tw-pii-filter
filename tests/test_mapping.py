@@ -4,7 +4,9 @@
 違反這條會導致還原時把兩個人的個資對調 —— 比洩漏更嚴重。
 """
 
-from proxy.mapping import TOKEN_PATTERN, MappingTable
+import pytest
+
+from proxy.mapping import FALLBACK_TYPE, TOKEN_PATTERN, MappingTable, normalize_type
 
 
 def test_同一個真值永遠拿到同一個佔位符():
@@ -86,6 +88,77 @@ def test_不同型別的相同字串各自有佔位符():
 
     assert as_id != as_key
     assert table.value_for(as_id) == table.value_for(as_key) == "A123456789"
+
+
+class Test型別代碼正規化:
+    """語意層送進來的是小寫的 name / address / position。
+
+    若原樣拿去發號碼會產生 `[name_1]`，而 `TOKEN_PATTERN` 只認大寫 ——
+    遮蔽成功、還原失效，佔位符會被寫進使用者的檔案。
+    """
+
+    @pytest.mark.parametrize(
+        ("raw", "expected"),
+        [
+            ("name", "NAME"),  # D 的 NER 實際回傳值
+            ("address", "ADDRESS"),
+            ("position", "POSITION"),
+            ("TW_ID", "TW_ID"),  # 已經合法的不該被動到
+            ("tw_phone_m", "TW_PHONE_M"),
+            ("credit card", "CREDIT_CARD"),  # 空白也當分隔
+            ("ADDRESS2", "ADDRESS"),  # 數字會被清掉（佔位符無法反解）
+            ("__weird__", "WEIRD"),  # 頭尾底線清掉，否則不符 TOKEN_PATTERN
+            ("", FALLBACK_TYPE),  # 空字串有退路，不會產生 `[_1]`
+            ("123", FALLBACK_TYPE),
+            (None, FALLBACK_TYPE),
+        ],
+    )
+    def test_正規化結果(self, raw, expected):
+        assert normalize_type(raw) == expected
+
+    @pytest.mark.parametrize(
+        "raw", ["name", "address", "position", "", "123", "怪 型別", None]
+    )
+    def test_正規化後一定是還原得回去的佔位符(self, raw):
+        """真正的驗收條件：發出去的佔位符必須被 TOKEN_PATTERN 認得。"""
+        table = MappingTable()
+
+        token = table.token_for(raw, "王小明")
+
+        assert TOKEN_PATTERN.fullmatch(token), f"{raw!r} 產生了還原不了的 {token}"
+        assert table.value_for(token) == "王小明"
+
+    def test_小寫型別遮蔽後還原得回原文(self):
+        table = MappingTable()
+        token = table.token_for("name", "王小明")
+
+        text, restored, unknown = table.restore_text(f"客戶 {token} 來電")
+
+        assert token == "[NAME_1]"
+        assert text == "客戶 王小明 來電"
+        assert (restored, unknown) == (1, 0)
+
+    def test_大小寫混用不會撞號_把兩個人的個資對調(self):
+        """最危險的一條。
+
+        若 `name` 與 `NAME` 被當成兩個型別，兩邊都會從 1 號開始發，
+        產生兩個 `[NAME_1]` 指向不同的人 —— 還原時個資會對調。
+        """
+        table = MappingTable()
+
+        first = table.token_for("name", "王小明")
+        second = table.token_for("NAME", "陳大同")
+
+        assert first == "[NAME_1]"
+        assert second == "[NAME_2]"
+        assert table.value_for(first) == "王小明"
+        assert table.value_for(second) == "陳大同"
+
+    def test_正規化後同型別的同一真值仍是同一個佔位符(self):
+        table = MappingTable()
+
+        assert table.token_for("name", "王小明") == table.token_for("NAME", "王小明")
+        assert len(table) == 1
 
 
 class Test佔位符樣式:
