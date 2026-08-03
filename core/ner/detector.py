@@ -23,6 +23,11 @@ TODO(D): 仍待確認：
     （16/20）能正確辨識出「這是商業實體」而非誤標成 address；仍有 2/20 的情況
     把店名標成 address（真正的型別搞混，比例約 10%）。company 是否算目標 PII
     屬政策問題（類似 position，可考慮預設不遮蔽、讓使用者決定）
+  - 已加上 ADDRESS 型別的合理性過濾（ADDRESS_INDICATOR_CHARS）：不含任何
+    行政區劃/地址關鍵字（市/縣/區/路/巷/號等）的 ADDRESS 結果一律過濾，
+    用來降低斷詞邊界錯誤產生的雜訊（例如「咖啡廳」被切成「啡廳」誤標成地址）。
+    這是權宜措施，不是根治模型本身的判斷力問題，過濾條件仍可能誤殺極少數
+    合法的短地址（例如只寫「內湖」沒有「區」），需持續觀察、視情況調整字元集
 """
 
 from typing import List, Dict, Optional
@@ -38,6 +43,12 @@ class NERDetector:
     MODEL_NAME = "gyr66/bert-base-chinese-finetuned-ner"
     SOURCE = "model"  # 供 A 的 conflict_resolver 分辨偵測來源
     DEFAULT_MIN_CONFIDENCE = 0.5  # 低於此信心分數的偵測結果視為雜訊，直接過濾
+
+    # ADDRESS 型別的合理性檢查：真正的地址幾乎都含有行政區劃/地址關鍵字。
+    # 用來過濾中文斷詞邊界錯誤產生的雜訊，例如「咖啡廳」被切成「啡廳」誤標成地址
+    # （模型本身的判斷力問題，無法從程式碼層面根治，這只是降低雜訊的權宜措施，
+    # 不是完整解法——過濾條件仍可能誤殺極少數合法的短地址，需持續觀察調整）。
+    ADDRESS_INDICATOR_CHARS = set("市縣區鄉鎮村里路街巷弄號樓段道")
 
     def __init__(self, device: int = -1):
         """
@@ -89,6 +100,16 @@ class NERDetector:
 
             start = ent.get("start")
             end = ent.get("end")
+            entity_text = text[start:end]
+            entity_type = ent.get("entity_group", "").upper()
+
+            # 地址合理性檢查：不含任何地址關鍵字的字串（例如斷詞邊界切出來的
+            # 「啡廳」）視為雜訊，直接過濾，不送給下游
+            if entity_type == "ADDRESS" and not any(
+                c in self.ADDRESS_INDICATOR_CHARS for c in entity_text
+            ):
+                continue
+
             formatted.append({
                 "start": start,
                 "end": end,
@@ -98,11 +119,11 @@ class NERDetector:
                 # （不拋錯、只回報「還原 0 筆」），使用者檔案裡會留下一堆沒還原的佔位符。
                 # C 在 PR review 中發現這個問題並建議在來源端轉大寫，而非放寬正則
                 # （放寬正則會讓 [Name_1]/[NAME_1]/[name_1] 變成三種不同佔位符，更危險）。
-                "type": ent.get("entity_group", "").upper(),
+                "type": entity_type,
                 # 注意：不要用 ent.get("word")！中文 wordpiece 重組後的 word
                 # 會夾帶多餘空格（例如 "王 小 明"），導致 text[start:end] != text。
                 # 一律用 start/end 對原文切片，才能保證符合 interface.md 的字元索引要求。
-                "text": text[start:end],
+                "text": entity_text,
                 "confidence": score,
                 "source": self.SOURCE,
             })
