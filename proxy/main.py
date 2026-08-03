@@ -14,6 +14,7 @@ agent 那邊把 base URL 指到 `http://localhost:8000/v1` 即可。
 （實測 Aider 會回報 SEARCH/REPLACE block failed to match）。
 """
 
+import asyncio
 import json
 import logging
 import sys
@@ -67,6 +68,7 @@ async def healthz() -> dict:
         "upstream": config.UPSTREAM_BASE_URL,
         "upstream_key_loaded": bool(config.UPSTREAM_API_KEY),
         "mode": "masking",  # 第二版：遮蔽 + 還原
+        "ner_enabled": config.ENABLE_NER,
         "mapping_entries": len(app.state.mapping),
         "detection_cache": detector.CACHE.stats(),
     }
@@ -74,6 +76,11 @@ async def healthz() -> dict:
 
 def _mask_request(path: str, body: bytes, table: MappingTable) -> tuple[bytes, float]:
     """遮蔽請求內容，回傳 (要送出的 body, 花費的毫秒數)。
+
+    這是同步函式，由 `_proxy` 透過 `asyncio.to_thread` 丟到 thread pool 執行，
+    不佔用 event loop。純規則層時這筆成本只有幾毫秒，感覺不出差別；但
+    `PII_ENABLE_NER=1` 開啟語意層後單次偵測約 742 ms（CPU），若直接在
+    event loop 裡同步跑，會擋住同一個 proxy 行程裡的其他請求排隊等它。
 
     遮蔽或解析失敗一律吞掉並原樣轉發 —— proxy 的第一要務是不要弄壞 agent。
     代價是那次請求不受保護，因此失敗會以 ERROR 等級留下紀錄。
@@ -103,7 +110,7 @@ def _mask_request(path: str, body: bytes, table: MappingTable) -> tuple[bytes, f
 async def _proxy(path: str, request: Request) -> Response:
     table: MappingTable = request.app.state.mapping
     body = await request.body()
-    body, detect_ms = _mask_request(path, body, table)
+    body, detect_ms = await asyncio.to_thread(_mask_request, path, body, table)
 
     started = time.perf_counter()
     upstream = await forward.open_upstream(

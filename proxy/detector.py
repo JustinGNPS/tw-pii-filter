@@ -17,6 +17,7 @@
 from typing import Any
 
 from core.rules import detect_all as _detect_all
+from proxy import config
 from proxy.cache import DetectionCache
 
 # JSON 路徑：dict 的 key 用 str，list 的 index 用 int
@@ -27,17 +28,39 @@ Path = tuple[Any, ...]
 CACHE = DetectionCache()
 
 
+def _extra_spans(text: str) -> list[dict] | None:
+    """語意層（D 的 NER）掃描，供 `detect_all(text, extra_spans=...)` 使用。
+
+    `PII_ENABLE_NER` 關閉時（預設）直接回傳 `None`，等同不跑語意層 ——
+    語意層單次推論約 742 ms（CPU），是規則層的一百多倍，不該讓每個請求
+    都白白付這筆延遲，見 `proxy/README.md`「語意層」一節。
+
+    `core.ner.detector` 內部會 `import torch` / `transformers`，這兩個套件
+    很重（GB 等級）。關閉語意層時完全不 import 這個模組，使用者不需要
+    安裝這兩個套件也能跑純規則層的 proxy。
+    """
+    if not config.ENABLE_NER:
+        return None
+    from core.ner.detector import detect_ner
+
+    return detect_ner(text)
+
+
 def detect(text: str, cache: DetectionCache | None = None) -> dict:
     """呼叫 A 的偵測核心（經過快取）。回傳格式見 `docs/interface.md`。
 
-    A 的 `detect_all()` 內部已做 Layer 4 重疊仲裁（`core/rules/conflict_resolver.py`），
-    因此回傳的 spans 保證互不重疊 —— proxy 之後做替換時不需要自己再仲裁。
+    規則層與語意層（若啟用）各自獨立掃描同一段文字，結果一起交給
+    `detect_all(text, extra_spans=...)`。A 的 `detect_all()` 內部已做
+    Layer 4 重疊仲裁（`core/rules/conflict_resolver.py`），因此回傳的
+    spans 保證互不重疊 —— proxy 之後做替換時不需要自己再仲裁。
 
-    偵測是純函式（同樣的文字永遠得到同樣的結果），因此快取不會改變行為。
-    測試可傳入自己的 `DetectionCache` 以取得隔離。
+    偵測是純函式（同樣的文字、同樣的 `PII_ENABLE_NER` 設定下永遠得到同樣的
+    結果），因此快取不會改變行為。測試可傳入自己的 `DetectionCache` 以取得隔離。
     """
     table = CACHE if cache is None else cache
-    spans = table.get_or_compute(text, lambda t: _detect_all(t)["spans"])
+    spans = table.get_or_compute(
+        text, lambda t: _detect_all(t, extra_spans=_extra_spans(t))["spans"]
+    )
     return {"text": text, "spans": spans}
 
 

@@ -81,6 +81,15 @@ SKIP_TYPES = _parse_skip_types(
     DEFAULT_SKIP_TYPES if _skip_raw is None else _skip_raw
 )
 
+# 語意層（D 的 NER）是否啟用 -------------------------------------------------
+#
+# 語意層單次推論（CPU）約 742 ms，是規則層的一百多倍，且是同步阻塞呼叫。
+# 預設關閉：規則層永遠開（快、確定性，是本專題的核心賣點），語意層是
+# 選配的加強，需要展示姓名/地址遮蔽效果時才手動開啟。
+#
+# 設定方式：`.env` 或環境變數 `PII_ENABLE_NER=1`（或 `true`/`yes`，大小寫不拘）。
+ENABLE_NER = os.getenv("PII_ENABLE_NER", "").strip().lower() in ("1", "true", "yes")
+
 
 def startup_summary() -> str:
     """啟動時印的設定摘要 —— 只印變數名稱與 base URL，**不印金鑰內容**。"""
@@ -92,5 +101,6 @@ def startup_summary() -> str:
         f"上游 base URL：{UPSTREAM_BASE_URL}\n"
         f"上游金鑰：{key_status}\n"
         f"預設模型：{DEFAULT_MODEL}\n"
-        f"偵測到但不遮蔽的型別：{skipped}"
+        f"偵測到但不遮蔽的型別：{skipped}\n"
+        f"語意層（NER）：{'已啟用' if ENABLE_NER else '未啟用（僅規則層）'}"
     )

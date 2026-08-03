@@ -58,6 +58,26 @@ Agent（Aider / Cline / Continue / Codex / OpenCode）
 但職稱本身不是個資。遮掉它對隱私沒有幫助，卻會讓 agent 讀不懂上下文。
 預設跳過，可用 `PII_SKIP_TYPES` 調整（見下方環境變數表）。
 
+### 語意層（D 的 NER）：預設關閉，選配開啟
+
+`proxy/detector.py` 已接上 `core.ner.detect_ner()`，會把語意層結果當
+`extra_spans` 一起送進 `detect_all()` 仲裁。**規則層與語意層各自獨立掃描
+同一段文字，只在最後由 Layer 4 合併、仲裁重疊** —— 規則層的 8 種型別不會
+經過語意層判斷，反之亦然。
+
+預設**關閉**（`PII_ENABLE_NER` 沒設定或設為空），只跑規則層。原因：
+
+- 語意層單次推論（CPU）約 742 ms，是規則層（2〜4 ms）的一百多倍，
+  且是同步阻塞呼叫，開著會讓每個請求都平白多付這筆延遲
+- `core.ner.detector` 內部會 `import torch` / `transformers`，這兩個套件
+  很重（GB 等級 + 模型權重）。關閉時 proxy 完全不 import 這個模組，
+  不需要安裝 `core/ner/requirements.txt` 也能跑
+
+要展示姓名/地址遮蔽效果時，設 `PII_ENABLE_NER=1`（先 `pip install -r
+core/ner/requirements.txt`）。遮蔽本身（`_mask_request`）已經用
+`asyncio.to_thread` 丟到背景執行緒跑，開啟語意層後也不會卡住 event loop
+上其他請求。
+
 ### 已知取捨
 
 同一真值永遠對到同一佔位符，因此雲端 AI 可以看出「這兩處是同一個人」
@@ -95,6 +115,7 @@ python -m venv .venv
 | 連線逾時（秒） | `PROXY_CONNECT_TIMEOUT` | `10` |
 | 讀取逾時（秒） | `PROXY_READ_TIMEOUT` | `600` |
 | 不遮蔽的型別（逗號分隔） | `PII_SKIP_TYPES` | `POSITION` |
+| 啟用語意層（NER） | `PII_ENABLE_NER` | 關閉（僅規則層） |
 
 `PII_SKIP_TYPES` 設成空字串代表**什麼都不跳過**（連職稱也遮）。
 大小寫都吃，內部會做同一套正規化。啟動時會把實際生效的清單印出來。
