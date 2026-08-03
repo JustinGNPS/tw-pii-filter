@@ -14,18 +14,15 @@ Layer 2 語意層 NER 偵測器
      已在下方補上，內部仍沿用 NERDetector 類別實作
 
 TODO(D): 仍待確認：
-  - 實測發現模型的 entity_group 回傳的是 name、address 這類代碼（不是先前假設的
-    PERSON/LOCATION/ORG），一樣不在 interface.md 的類別代碼清單裡，需請 A 確認
-    是否要新增這些代碼、或需要做類別名稱轉換對照表
-  - 已修正一個重大 bug：不可用模型 word 欄位當作 text，因中文 wordpiece 重組後
-    word 會夾帶多餘空格（例如 "王 小 明"），導致 text[start:end] != text，
-    違反 interface.md 對字元索引的要求。已改為一律用 text[start:end] 切片。
-  - 用 data/synthetic_pii/ 合成語料實測（程式碼/對話紀錄/log 混雜情境）後發現：
-    1. 出現第三種型別 "position"（客服/客戶/工程師等職稱/角色詞），信心分數常常
-       很高，但這類詞本身不算個資，是否要遮蔽需跟團隊討論
-    2. 電話號碼這類數字序列常被模型切碎、誤判成 name/address，且信心分數明顯偏低
-       （曾出現 0.27），已加上 min_confidence 門檻（預設 0.5）過濾這類雜訊，
-       電話號碼本來就該交給 A 的規則層處理
+  - 已修正一個關鍵 bug（C 在 PR review 中發現）：type 欄位已統一轉大寫
+    （name -> NAME、address -> ADDRESS、position -> POSITION、company -> COMPANY），
+    避免 proxy/extension 的佔位符正則（只認大寫）無法還原小寫型別，造成靜默失敗。
+    最終要不要沿用模型原生分類名稱、還是轉成 PERSON/LOCATION 這類命名，
+    仍待 A 定案寫進 interface.md，但至少「大小寫」這件事已經解決。
+  - 用店名/公司名合成語料測試後，發現模型還有第四種型別 company，且大部分
+    （16/20）能正確辨識出「這是商業實體」而非誤標成 address；仍有 2/20 的情況
+    把店名標成 address（真正的型別搞混，比例約 10%）。company 是否算目標 PII
+    屬政策問題（類似 position，可考慮預設不遮蔽、讓使用者決定）
 """
 
 from typing import List, Dict, Optional
@@ -95,7 +92,13 @@ class NERDetector:
             formatted.append({
                 "start": start,
                 "end": end,
-                "type": ent.get("entity_group"),
+                # 統一轉大寫：proxy（B）與 extension（C）的佔位符正則
+                # `[A-Z][A-Z_]*` 只認大寫，若送出小寫 type（name/address/position/company），
+                # 佔位符 [name_1] 會產生得出來，但還原時比對不到，導致靜默失敗
+                # （不拋錯、只回報「還原 0 筆」），使用者檔案裡會留下一堆沒還原的佔位符。
+                # C 在 PR review 中發現這個問題並建議在來源端轉大寫，而非放寬正則
+                # （放寬正則會讓 [Name_1]/[NAME_1]/[name_1] 變成三種不同佔位符，更危險）。
+                "type": ent.get("entity_group", "").upper(),
                 # 注意：不要用 ent.get("word")！中文 wordpiece 重組後的 word
                 # 會夾帶多餘空格（例如 "王 小 明"），導致 text[start:end] != text。
                 # 一律用 start/end 對原文切片，才能保證符合 interface.md 的字元索引要求。

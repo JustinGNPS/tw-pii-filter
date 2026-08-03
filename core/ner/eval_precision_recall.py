@@ -55,8 +55,8 @@ def find_all_occurrences(haystack: str, needle: str, entity_type: str) -> List[S
 def build_ground_truth(text: str, records: list) -> List[Span]:
     gt: List[Span] = []
     for r in records:
-        gt.extend(find_all_occurrences(text, r["name"], "name"))
-        gt.extend(find_all_occurrences(text, r["address"], "address"))
+        gt.extend(find_all_occurrences(text, r["name"], "NAME"))
+        gt.extend(find_all_occurrences(text, r["address"], "ADDRESS"))
     return gt
 
 
@@ -101,10 +101,12 @@ def evaluate_file(path: Path, records: list):
 
     raw_predicted = detect_ner(text)
     # 只評估 name / address，position 不算目標 PII（B 建議預設不遮蔽）
+    # 注意：detect_ner() 已將 type 統一轉大寫（對齊 interface.md 慣例），
+    # 這裡的比對條件要跟著用大寫
     predicted = [
         Span(start=r["start"], end=r["end"], type=r["type"], text=r["text"])
         for r in raw_predicted
-        if r["type"] in ("name", "address")
+        if r["type"] in ("NAME", "ADDRESS")
     ]
 
     tp, fp, fn = match_spans(predicted, ground_truth)
