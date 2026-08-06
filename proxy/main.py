@@ -51,6 +51,15 @@ async def lifespan(app: FastAPI):
     logger.info("proxy 啟動\n%s", config.startup_summary())
     if not config.UPSTREAM_API_KEY:
         logger.warning("找不到上游金鑰，轉發一定會失敗。請確認 .env 內的變數名稱。")
+    if config.ENABLE_NER:
+        # core/ner/detector.py 的 `_get_detector()` 單例目前沒有鎖（C 在 PR #11
+        # review 抓到：`asyncio.to_thread` 讓多個請求可能真的並行進 thread pool，
+        # 冷啟動時兩個請求可能同時把 BERT 模型各載入一次）。啟動時先跑一次把
+        # 單例建好，之後第一個真實請求就不用再付模型載入的錢，也大幅縮小併發
+        # 撞上的窗口 —— 但單例本身沒鎖這件事仍待 D 在 core/ner/detector.py 修，
+        # 這裡只是治標。
+        await asyncio.to_thread(detector._extra_spans, "")
+        logger.info("語意層模型已預熱")
     try:
         yield
     finally:

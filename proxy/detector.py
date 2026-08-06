@@ -56,10 +56,16 @@ def detect(text: str, cache: DetectionCache | None = None) -> dict:
 
     偵測是純函式（同樣的文字、同樣的 `PII_ENABLE_NER` 設定下永遠得到同樣的
     結果），因此快取不會改變行為。測試可傳入自己的 `DetectionCache` 以取得隔離。
+
+    `PII_ENABLE_NER` 併入快取 key（見 `DetectionCache.fingerprint` 的
+    `key_extra`）：同一份文字在語意層開/關兩種設定下該有不同結果，若只用文字
+    當 key，設定切換後可能誤用切換前算出的快取結果。
     """
     table = CACHE if cache is None else cache
     spans = table.get_or_compute(
-        text, lambda t: _detect_all(t, extra_spans=_extra_spans(t))["spans"]
+        text,
+        lambda t: _detect_all(t, extra_spans=_extra_spans(t))["spans"],
+        key_extra=str(config.ENABLE_NER),
     )
     return {"text": text, "spans": spans}
 

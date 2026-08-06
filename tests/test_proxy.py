@@ -38,6 +38,39 @@ def test_healthz_不會轉發到上游(client):
     assert response.json()["mode"] == "masking"
 
 
+# ---------------------------------------------------------------- 語意層預熱
+
+
+def test_ner關閉時啟動不會呼叫語意層(monkeypatch):
+    """預設關閉，啟動流程不該碰語意層 —— 碰了就代表會意外 import torch/transformers。"""
+    monkeypatch.setattr(config, "UPSTREAM_BASE_URL", UPSTREAM)
+    monkeypatch.setattr(config, "UPSTREAM_API_KEY", "test-key")
+    monkeypatch.setattr(config, "ENABLE_NER", False)
+    calls = []
+    monkeypatch.setattr(detector, "_extra_spans", lambda text: calls.append(text) or None)
+
+    with TestClient(main.app):
+        pass
+
+    assert calls == []
+
+
+def test_ner開啟時啟動會預熱一次(monkeypatch):
+    """C 在 PR #11 review 指出：`core/ner/detector.py` 的單例沒上鎖，冷啟動時
+    多個並行請求可能各自載入一次模型。這裡先在啟動時跑過一次，讓單例在
+    第一個真實請求進來前就建好，縮小併發撞上的窗口。"""
+    monkeypatch.setattr(config, "UPSTREAM_BASE_URL", UPSTREAM)
+    monkeypatch.setattr(config, "UPSTREAM_API_KEY", "test-key")
+    monkeypatch.setattr(config, "ENABLE_NER", True)
+    calls = []
+    monkeypatch.setattr(detector, "_extra_spans", lambda text: calls.append(text) or None)
+
+    with TestClient(main.app):
+        pass
+
+    assert calls == [""]  # 啟動時預熱呼叫了一次，且不需要真的送文字進去
+
+
 # ---------------------------------------------------------------- 透明轉發
 
 

@@ -48,15 +48,25 @@ class DetectionCache:
         self.misses = 0
 
     @staticmethod
-    def fingerprint(text: str) -> str:
-        return hashlib.sha256(text.encode("utf-8")).hexdigest()
+    def fingerprint(text: str, key_extra: str = "") -> str:
+        """指紋預設只吃 `text`；呼叫端若有會改變偵測結果的執行期設定（例如
+        `PII_ENABLE_NER`），應透過 `key_extra` 併入，否則設定切換後可能誤用
+        舊設定算出的快取結果（見 `proxy/detector.py` 的呼叫方式）。
+        """
+        return hashlib.sha256(f"{key_extra}\t{text}".encode("utf-8")).hexdigest()
 
-    def get_or_compute(self, text: str, compute: Callable[[str], list[dict]]) -> list[dict]:
+    def get_or_compute(
+        self,
+        text: str,
+        compute: Callable[[str], list[dict]],
+        key_extra: str = "",
+    ) -> list[dict]:
         """查快取；沒命中就呼叫 `compute(text)` 並記住結果。
 
         回傳的是**複本** —— 呼叫端就算改動了 spans，也不會汙染快取。
+        `key_extra` 見 `fingerprint()`。
         """
-        key = self.fingerprint(text)
+        key = self.fingerprint(text, key_extra)
 
         with self._lock:
             cached = self._entries.get(key)

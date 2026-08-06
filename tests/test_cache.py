@@ -73,6 +73,24 @@ def test_key_是指紋而非原文():
     assert len(fingerprint) == 64  # SHA-256 十六進位
 
 
+def test_key_extra不同時視為不同筆快取(cache):
+    """C 在 PR #11 review 提過：`PII_ENABLE_NER` 開關若不併入 key，開關切換後
+    可能誤用切換前算出的快取結果。用 `key_extra` 模擬這種會影響偵測結果的
+    執行期設定。
+    """
+    calls = []
+    compute = lambda t: calls.append(t) or [{"type": "TW_ID"}]
+
+    cache.get_or_compute("同一段文字", compute, key_extra="True")
+    cache.get_or_compute("同一段文字", compute, key_extra="False")
+
+    assert calls == ["同一段文字", "同一段文字"]  # 兩種設定各算一次，不互相借用
+    assert (cache.hits, cache.misses) == (0, 2)
+
+    cache.get_or_compute("同一段文字", compute, key_extra="True")  # 這次才是真的命中
+    assert (cache.hits, cache.misses) == (1, 2)
+
+
 def test_命中率統計(cache):
     assert cache.hit_rate == 0.0  # 還沒查過
 

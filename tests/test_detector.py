@@ -65,3 +65,35 @@ class Test快取與語意層開關的交互:
         detector.detect(text, cache=cache)
 
         assert len(calls) == 1  # 第二次是快取命中，沒有再跑一次語意層
+
+    def test_同一張快取切換ENABLE_NER不會拿到切換前的舊結果(self, monkeypatch):
+        """C 在 PR #11 review 提過的風險：快取 key 若只看文字，`PII_ENABLE_NER`
+        執行期切換後、沒換一張新快取的話，可能誤用切換前算出的結果。
+        `detector.detect()` 已把 `config.ENABLE_NER` 併入 key_extra，這裡驗證
+        切換後兩次呼叫互不干擾。
+        """
+        cache = DetectionCache()
+        text = "王小明的信箱是 test@example.com"
+
+        monkeypatch.setattr(config, "ENABLE_NER", False)
+        off_result = detector.detect(text, cache=cache)
+        assert {span["type"] for span in off_result["spans"]} == {"EMAIL"}
+
+        monkeypatch.setattr(config, "ENABLE_NER", True)
+        monkeypatch.setattr(
+            detector,
+            "_extra_spans",
+            lambda t: [
+                {
+                    "start": 0,
+                    "end": 3,
+                    "type": "NAME",
+                    "text": "王小明",
+                    "confidence": 0.9,
+                    "source": "model",
+                }
+            ],
+        )
+        on_result = detector.detect(text, cache=cache)
+        types = {span["type"] for span in on_result["spans"]}
+        assert types == {"EMAIL", "NAME"}  # 不是關閉時算出的舊快取結果
