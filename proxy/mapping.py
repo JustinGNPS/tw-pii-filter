@@ -28,6 +28,7 @@ diff 比對就會失敗（實測：Aider 會回報 SEARCH/REPLACE block failed t
 
 import re
 import threading
+import time
 
 # 佔位符格式 `[TYPE_N]`，與 A 的 `replacement` 欄位一致，C 那邊共用同一格式。
 # TYPE 只含大寫英文與底線，N 為正整數。
@@ -43,6 +44,11 @@ _ILLEGAL_TYPE_CHARS = re.compile(r"[^A-Z]+")
 
 # 正規化後空掉時的退路，例如型別是空字串或純數字
 FALLBACK_TYPE = "PII"
+
+# 對照表閒置逾時的預設值（秒）。對照表是明文個資，不該無限期駐留 ——
+# 見 docs/B_design.md 決定 11。實際生效值由 `proxy/config.py` 讀環境變數決定，
+# 這裡的常數只是 `MappingTable()` 不帶參數建構時的退路（測試等場合常這樣用）。
+DEFAULT_IDLE_TIMEOUT = 1800.0  # 30 分鐘
 
 
 def normalize_type(pii_type: object) -> str:
@@ -88,13 +94,40 @@ class MappingTable:
 
     執行緒安全：FastAPI 以非同步方式處理請求，同一個 proxy 行程可能同時
     處理多個請求，因此以 lock 保護。
+
+    ## 閒置逾時清除（決定 11，見 `docs/B_design.md`）
+
+    對照表是明文個資，不該無限期駐留 —— 閒置超過 `idle_timeout` 秒就在
+    下一次 `token_for()` 之前整張清空。只在 `token_for()`（新增遮蔽）檢查，
+    **不在 `value_for()`（還原）檢查**：還原永遠緊接在同一次請求的遮蔽
+    之後，只要遮蔽當下沒清空，還原就不會撲空；若還原路徑也做這個檢查，
+    長時間串流中的還原可能被自己觸發的逾時清空打斷，把還沒還原完的
+    佔位符變成查無對照（比不清除更糟）。
+
+    `idle_timeout=None` 停用這個機制（永不自動清空，第一版與測試常見用法）。
     """
 
-    def __init__(self) -> None:
+    def __init__(self, idle_timeout: float | None = DEFAULT_IDLE_TIMEOUT) -> None:
         self._token_of: dict[tuple[str, str], str] = {}  # (型別, 真值) -> 佔位符
         self._value_of: dict[str, str] = {}  # 佔位符 -> 真值
         self._counter: dict[str, int] = {}  # 型別 -> 已發出的最大號碼
         self._lock = threading.Lock()
+        self._idle_timeout = idle_timeout
+        self._last_active = time.monotonic()
+
+    def _clear_locked(self) -> None:
+        """清空內容，呼叫端必須已持有 `_lock`（本身不上鎖，避免與 `clear()`/
+        `_expire_if_idle_locked()` 巢狀取鎖造成死結）。"""
+        self._token_of.clear()
+        self._value_of.clear()
+        self._counter.clear()
+
+    def _expire_if_idle_locked(self) -> None:
+        """閒置超過門檻就清空，呼叫端必須已持有 `_lock`。"""
+        now = time.monotonic()
+        if self._idle_timeout and now - self._last_active > self._idle_timeout:
+            self._clear_locked()
+        self._last_active = now
 
     def token_for(self, pii_type: str, value: str) -> str:
         """取得真值對應的佔位符；沒看過的真值會配一個新號碼。
@@ -107,6 +140,8 @@ class MappingTable:
         pii_type = normalize_type(pii_type)
         key = (pii_type, value)
         with self._lock:
+            self._expire_if_idle_locked()
+
             existing = self._token_of.get(key)
             if existing is not None:
                 return existing
@@ -124,6 +159,8 @@ class MappingTable:
 
         雲端 AI 可能自己編出沒發過的佔位符（幻覺）。猜測等同於憑空捏造一筆
         個資塞進使用者的檔案，比洩漏更糟 —— 因此查不到就讓呼叫端原樣保留。
+
+        刻意不檢查閒置逾時（理由見類別 docstring）。
         """
         with self._lock:
             return self._value_of.get(token)
@@ -148,11 +185,10 @@ class MappingTable:
         return TOKEN_PATTERN.sub(replace, text), restored, unknown
 
     def clear(self) -> None:
-        """清空對照表（例如新對話開始時，避免號碼無止盡累積）。"""
+        """清空對照表（手動呼叫；自動閒置清除見 `_expire_if_idle_locked`）。"""
         with self._lock:
-            self._token_of.clear()
-            self._value_of.clear()
-            self._counter.clear()
+            self._clear_locked()
+            self._last_active = time.monotonic()
 
     def __len__(self) -> int:
         with self._lock:

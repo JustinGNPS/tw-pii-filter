@@ -28,9 +28,19 @@ TODO(D): 仍待確認：
     用來降低斷詞邊界錯誤產生的雜訊（例如「咖啡廳」被切成「啡廳」誤標成地址）。
     這是權宜措施，不是根治模型本身的判斷力問題，過濾條件仍可能誤殺極少數
     合法的短地址（例如只寫「內湖」沒有「區」），需持續觀察、視情況調整字元集
+  - 已修正一個關鍵 bug（B 7/31 提出、實測確認）：模型 tokenizer.model_max_length
+    = 512，超過此長度的文字後段會被無聲截斷、完全不會被掃到（實測 1501 字元的
+    文字產生 788 token，明顯超標；把假姓名放在第 2000 字元後完全偵測不到）。
+    已改為超過 CHUNK_CHAR_LIMIT（400 字元）自動切成有重疊的分段分別處理，
+    座標位移換算回原文位置後合併、去重。已知限制：去重靠 (start,end,type)
+    精確比對，極端情況下同一實體在不同分段被判斷出些微不同邊界時不會合併；
+    分段處理也會讓長文字的推論時間變長（多次呼叫模型），需要重新量測延遲。
+  - 已加上 _get_detector() 的 double-checked locking（C 在 review B 的 PR #11
+    asyncio.to_thread 整合時發現）：避免併發請求下模型被重複載入
 """
 
 from typing import List, Dict, Optional
+import threading
 from transformers import pipeline
 
 
@@ -50,6 +60,15 @@ class NERDetector:
     # 不是完整解法——過濾條件仍可能誤殺極少數合法的短地址，需持續觀察調整）。
     ADDRESS_INDICATOR_CHARS = set("市縣區鄉鎮村里路街巷弄號樓段道")
 
+    # 分段處理相關常數（回應 B 7/31 提出、實測確認存在的 512 token 截斷問題）：
+    # 模型 tokenizer.model_max_length = 512，實測 1501 字元的文字會產生 788 個
+    # token（換算約 1.9 字元/token），超過上限的部分會被模型忽略、完全不會報錯，
+    # 是無聲漏測。CHUNK_CHAR_LIMIT 保守抓在遠低於安全比例換算值之下，留足夠餘裕
+    # 因應英數字元（電話號碼、身分證字號等）token 密度較高的情況。
+    # CHUNK_OVERLAP 讓相鄰兩段有重疊，避免實體剛好被切在段落交界處而漏抓。
+    CHUNK_CHAR_LIMIT = 400
+    CHUNK_OVERLAP = 50
+
     def __init__(self, device: int = -1):
         """
         Args:
@@ -65,35 +84,12 @@ class NERDetector:
             device=device,
         )
 
-    def detect(self, text: str, min_confidence: float = DEFAULT_MIN_CONFIDENCE) -> List[Dict]:
-        """
-        對輸入文字執行 NER 偵測，回傳符合系統規格的實體清單。
-
-        Args:
-            text: 待偵測的原始文字
-            min_confidence: 信心分數門檻，低於此值的結果會被過濾掉。
-                實測發現電話號碼這類數字序列常被模型切碎、誤判成 name/address，
-                且信心分數明顯偏低（例如 0.27），這類雜訊不該送進 A 的仲裁邏輯，
-                過濾掉即可（電話號碼本來就該由 A 的規則層處理）。
-
-        Returns:
-            List[Dict]: 每個元素格式（暫定，待對齊 docs/interface.md）：
-                {
-                    "start": int,        # 實體起始字元位置
-                    "end": int,          # 實體結束字元位置
-                    "type": str,         # 實體類型，例如 name / address
-                    "text": str,         # 實體原文字串
-                    "confidence": float, # 模型信心分數（0~1），供 A 的仲裁邏輯使用
-                    "source": "model",   # 偵測來源，區分規則層 / 語意層
-                }
-        """
-        if not text:
-            return []
-
-        raw_results = self._pipeline(text)
-
+    def _format_entities(
+        self, raw_entities: List[Dict], text: str, min_confidence: float
+    ) -> List[Dict]:
+        """把 pipeline 的原始輸出轉成符合系統規格的格式（欄位轉換、過濾雜訊）。"""
         formatted: List[Dict] = []
-        for ent in raw_results:
+        for ent in raw_entities:
             score = float(ent.get("score", 0.0))
             if score < min_confidence:
                 continue  # 過濾低信心雜訊
@@ -130,6 +126,81 @@ class NERDetector:
 
         return formatted
 
+    @staticmethod
+    def _dedupe(entities: List[Dict]) -> List[Dict]:
+        """
+        相鄰分段有重疊，重疊區域裡的實體可能被偵測兩次（兩段都掃到同一段文字）。
+        用 (start, end, type) 當 key 去重——完全落在重疊區域內的實體，兩次偵測到
+        的絕對座標理應相同，可以精準去重。
+
+        已知限制：如果同一實體在兩個分段各自被判斷出些微不同的邊界（跨過重疊區邊緣
+        的極端情況），這裡不會合併，可能留下一筆不完全重複的殘影。這是分段處理的
+        已知取捨，不是完整解法，之後如有需要可以再加邊界合併邏輯。
+        """
+        seen = set()
+        deduped = []
+        for ent in entities:
+            key = (ent["start"], ent["end"], ent["type"])
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(ent)
+        return sorted(deduped, key=lambda e: e["start"])
+
+    def detect(self, text: str, min_confidence: float = DEFAULT_MIN_CONFIDENCE) -> List[Dict]:
+        """
+        對輸入文字執行 NER 偵測，回傳符合系統規格的實體清單。
+
+        文字超過 CHUNK_CHAR_LIMIT 時會自動切成有重疊的多個分段分別處理，
+        避免超出模型 512 token 上限而被無聲截斷（後段完全沒被掃到）。
+
+        Args:
+            text: 待偵測的原始文字
+            min_confidence: 信心分數門檻，低於此值的結果會被過濾掉。
+                實測發現電話號碼這類數字序列常被模型切碎、誤判成 name/address，
+                且信心分數明顯偏低（例如 0.27），這類雜訊不該送進 A 的仲裁邏輯，
+                過濾掉即可（電話號碼本來就該由 A 的規則層處理）。
+
+        Returns:
+            List[Dict]: 每個元素格式：
+                {
+                    "start": int,        # 實體起始字元位置
+                    "end": int,          # 實體結束字元位置
+                    "type": str,         # 實體類型，例如 NAME / ADDRESS
+                    "text": str,         # 實體原文字串
+                    "confidence": float, # 模型信心分數（0~1），供 A 的仲裁邏輯使用
+                    "source": "model",   # 偵測來源，區分規則層 / 語意層
+                }
+        """
+        if not text:
+            return []
+
+        if len(text) <= self.CHUNK_CHAR_LIMIT:
+            raw_results = self._pipeline(text)
+            return self._format_entities(raw_results, text, min_confidence)
+
+        # 分段處理：切成有重疊的多段，各自跑 NER，座標位移換算回原文位置
+        step = self.CHUNK_CHAR_LIMIT - self.CHUNK_OVERLAP
+        all_raw_with_offset: List[Dict] = []
+
+        chunk_start = 0
+        while chunk_start < len(text):
+            chunk_end = min(chunk_start + self.CHUNK_CHAR_LIMIT, len(text))
+            chunk_text = text[chunk_start:chunk_end]
+
+            for ent in self._pipeline(chunk_text):
+                shifted = dict(ent)
+                shifted["start"] = ent["start"] + chunk_start
+                shifted["end"] = ent["end"] + chunk_start
+                all_raw_with_offset.append(shifted)
+
+            if chunk_end == len(text):
+                break
+            chunk_start += step
+
+        formatted = self._format_entities(all_raw_with_offset, text, min_confidence)
+        return self._dedupe(formatted)
+
 
 # ---------------------------------------------------------------------------
 # 模組層級介面：A 依 docs/interface.md 呼叫的是 detect_ner(text)，不是類別方法。
@@ -138,12 +209,29 @@ class NERDetector:
 # ---------------------------------------------------------------------------
 
 _detector_instance: Optional[NERDetector] = None
+_detector_lock = threading.Lock()
 
 
 def _get_detector() -> NERDetector:
+    """
+    Lazy singleton，附 double-checked locking。
+
+    C 在 review B 的 asyncio.to_thread 整合時發現：原本沒加鎖，proxy 用
+    asyncio.to_thread 讓多個請求真的併行跑進 thread pool 後，冷啟動時可能有
+    兩個 thread 同時看到 _detector_instance is None，各自建一個 NERDetector()
+    —— BERT 模型被載入兩次（各數百 MB，記憶體尖峰翻倍），其中一個 instance
+    建完就被覆蓋丟棄，白花數百 ms 的載入時間，而且 HuggingFace pipeline()
+    的建構本身是否 thread-safe 也沒保證。
+
+    Double-checked locking：先在鎖外檢查一次（多數情況下 instance 已經存在，
+    不用每次呼叫都搶鎖，維持效能），只有真的是 None 時才進鎖，進鎖後再檢查
+    一次（可能在等鎖的期間，別的 thread 已經建好了），避免重複建立。
+    """
     global _detector_instance
-    if _detector_instance is None:
-        _detector_instance = NERDetector()
+    if _detector_instance is None:  # 第一次檢查（鎖外，快速路徑）
+        with _detector_lock:
+            if _detector_instance is None:  # 拿到鎖後再檢查一次
+                _detector_instance = NERDetector()
     return _detector_instance
 
 

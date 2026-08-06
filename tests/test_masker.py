@@ -167,7 +167,7 @@ class Test語意層的型別:
         monkeypatch.setattr(
             masker.detector,
             "scan_payload",
-            lambda _payload: [
+            lambda _payload, _cache=None: [
                 {
                     "path": ("messages", 0, "content"),
                     "text": "客服 A123456789",
@@ -190,7 +190,7 @@ class Test語意層的型別:
         monkeypatch.setattr(
             masker.detector,
             "scan_payload",
-            lambda _payload: [
+            lambda _payload, _cache=None: [
                 {
                     "path": ("messages", 0, "content"),
                     "text": "客服 您好",
