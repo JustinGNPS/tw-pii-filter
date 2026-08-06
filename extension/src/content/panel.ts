@@ -11,7 +11,7 @@
  */
 
 import type { Span } from '../core';
-import { isKnownType, riskLevel, typeLabel } from '../masking';
+import { isKnownType, isNonPii, riskLevel, typeLabel } from '../masking';
 
 /** 使用者在面板上做出的決定。 */
 export type PanelDecision =
@@ -107,12 +107,21 @@ export function showPanel(spans: Span[], placeholders: string[]): Promise<PanelD
     style.textContent = STYLE;
     shadow.append(style);
 
+    // 標題只算真正的個資：模型附帶的書名/遊戲/影劇/景點不該灌水到這個數字，
+    // 否則使用者對「偵測到 N 項」的信任會被稀釋。
+    const piiCount = spans.filter((span) => !isNonPii(span.type)).length;
+    const otherCount = spans.length - piiCount;
+    const heading =
+      otherCount > 0
+        ? `偵測到 ${piiCount} 項敏感資訊，另有 ${otherCount} 項非個資`
+        : `偵測到 ${piiCount} 項敏感資訊`;
+
     const backdrop = document.createElement('div');
     backdrop.className = 'backdrop';
     backdrop.innerHTML = `
       <div class="card" role="dialog" aria-modal="true" aria-label="敏感資訊確認">
         <header>
-          <h1>偵測到 ${spans.length} 項敏感資訊</h1>
+          <h1>${heading}</h1>
           <p class="sub">以下內容將在送出前於本地端替換成佔位符。取消勾選的項目會維持原文。</p>
         </header>
         <div class="list"></div>
@@ -136,7 +145,10 @@ export function showPanel(spans: Span[], placeholders: string[]): Promise<PanelD
 
       const checkbox = document.createElement('input');
       checkbox.type = 'checkbox';
-      checkbox.checked = true;
+      // 模型附帶的非個資類別（書名、遊戲、影劇、景點）預設不勾選：
+      // 照樣列出來讓使用者知道偵測到什麼，但不會把「哈利波特」遮成 [BOOK_1]。
+      // 不直接濾掉是為了避免與 proxy 的偵測結果不一致（proxy 沒濾）。
+      checkbox.checked = !isNonPii(span.type);
       checkbox.dataset.index = String(index);
       checkboxes.push(checkbox);
 
@@ -162,6 +174,14 @@ export function showPanel(spans: Span[], placeholders: string[]): Promise<PanelD
           ? `信心 ${span.confidence.toFixed(2)}（偏低，請確認）`
           : `信心 ${span.confidence.toFixed(2)}`;
       line1.append(typeEl, badge, conf);
+
+      // 非個資類別加註說明，讓使用者知道為什麼這筆預設沒被勾起來
+      if (isNonPii(span.type)) {
+        const note = document.createElement('span');
+        note.className = 'conf';
+        note.textContent = '· 非個資，預設不遮蔽';
+        line1.append(note);
+      }
 
       const line2 = document.createElement('div');
       line2.className = 'line2';

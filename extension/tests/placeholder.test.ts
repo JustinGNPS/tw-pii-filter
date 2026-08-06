@@ -9,7 +9,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { detectAll } from '../src/core';
-import { maskText } from '../src/masking';
+import { isKnownType, isNonPii, maskText, typeLabel } from '../src/masking';
 import { FALLBACK_TYPE, PlaceholderAllocator, normalizeType } from '../src/placeholder';
 
 /** 兩個 checksum 正確的身分證，只是在兩段文字裡出現順序相反。 */
@@ -131,6 +131,26 @@ describe('語意層類別代碼', () => {
     const { maskedText, mapping } = maskText('王小明住在台北市', nerSpans);
     expect(maskedText).toBe('[NAME_1]住在[ADDRESS_1]');
     expect(mapping.map((entry) => entry.type)).toEqual(['NAME', 'ADDRESS']);
+  });
+
+  it('模型定義的 14 種型別全部都有登記顯示名稱', () => {
+    const allModelTypes = [
+      'NAME', 'ADDRESS', 'COMPANY', 'ORGANIZATION', 'GOVERNMENT', 'POSITION',
+      'EMAIL', 'MOBILE', 'QQ', 'VX', 'BOOK', 'GAME', 'MOVIE', 'SCENE',
+    ];
+    for (const type of allModelTypes) {
+      expect(isKnownType(type), `${type} 沒有登記顯示名稱`).toBe(true);
+      expect(typeLabel(type)).not.toBe(type); // 有中文名稱，不是直接回傳代碼
+    }
+  });
+
+  it('非個資類別（書名/遊戲/影劇/景點）被正確標記', () => {
+    for (const type of ['BOOK', 'GAME', 'MOVIE', 'SCENE']) {
+      expect(isNonPii(type), `${type} 應視為非個資`).toBe(true);
+    }
+    for (const type of ['NAME', 'ADDRESS', 'TW_ID', 'POSITION', 'COMPANY']) {
+      expect(isNonPii(type), `${type} 不該被視為非個資`).toBe(false);
+    }
   });
 
   it('未登記的代碼不會讓遮蔽壞掉', () => {

@@ -17,19 +17,44 @@ export type RulePiiType =
   | 'API_KEY';
 
 /**
- * 語意層（Layer 2）的類別代碼。
+ * 語意層（Layer 2）的類別代碼——模型定義的**完整** 14 種。
  *
- * 來源是 `core/ner/detector.py`：模型的 `entity_group` 經 `.upper()` 後輸出。
- * 先前這裡列的 `name` / `address` / `position` 小寫版與 `PERSON` / `LOCATION` /
- * `ORG` 都已作廢——小寫版在型別代碼統一轉大寫後不再出現（見下），
- * `PERSON` 那組則是實測前的推測，從未真正產生過。
+ * 來源不是「測試句子撞見過哪些」，而是直接讀模型的 `config.json` 的
+ * `id2label`（去掉 BIO 前綴後取聯集），與 `core/ner/get_model_labels.py` 同一份清單。
+ * `core/ner/detector.py` 只把 `entity_group` 轉大寫，**沒有做型別過濾**，
+ * 因此這 14 種都可能實際出現在 `detect_all()` 的輸出裡。
  *
- * ⚠️ 這四個代碼**仍未列進 docs/interface.md 的類別代碼表**，
+ * ## ⚠️ 這個模型是通用中文 NER，不是 PII 專用模型
+ *
+ * 標籤集看得出來是 CLUENER 那一系的通用中文 NER：`BOOK` / `GAME` / `MOVIE` /
+ * `SCENE` 這四種**根本不是個資**，`EMAIL` / `MOBILE` 則與規則層重複
+ * （而且規則層有格式驗證、模型沒有）。分類見 `src/masking.ts` 的
+ * `NON_PII_TYPES` 與 `RULE_LAYER_DUPLICATE_TYPES`。
+ *
+ * ⚠️ 這些代碼**仍未列進 docs/interface.md 的類別代碼表**，
  * 而該文件自己要求「新增類別代碼時，應同步更新本文件並知會全隊」。
- * 目前三個模組各自從 PR 討論裡抄代碼，這正是本檔案上一版會過時的原因。
- * 已請 A 補進 interface.md；補上後這裡應以文件為準。
+ * 目前三個模組各自從 PR 討論裡抄代碼，這正是本檔案上一版會過時的原因
+ * （上一版只列了 4 種，漏掉 10 種）。補進文件後這裡應以文件為準。
  */
-export type ModelPiiType = 'NAME' | 'ADDRESS' | 'POSITION' | 'COMPANY';
+export type ModelPiiType =
+  // 真正的個資
+  | 'NAME'
+  | 'ADDRESS'
+  | 'COMPANY'
+  | 'ORGANIZATION'
+  | 'GOVERNMENT'
+  | 'POSITION'
+  // 與規則層重複（規則層有格式驗證，語意層沒有）
+  | 'EMAIL'
+  | 'MOBILE'
+  // 通訊帳號
+  | 'QQ'
+  | 'VX'
+  // 非個資：通用 NER 標籤集附帶的娛樂/作品類別
+  | 'BOOK'
+  | 'GAME'
+  | 'MOVIE'
+  | 'SCENE';
 
 /**
  * 類別代碼。
