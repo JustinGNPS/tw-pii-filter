@@ -47,7 +47,8 @@ _SCANNED_PATHS = ("chat/completions", "completions", "embeddings", "responses")
 async def lifespan(app: FastAPI):
     app.state.client = forward.make_client()
     # 對照表只存在記憶體，隨行程結束消失 —— 真實個資不落地
-    app.state.mapping = MappingTable()
+    # 閒置逾時後會自動清空（決定 11），逾時秒數見 config.MAPPING_IDLE_TIMEOUT
+    app.state.mapping = MappingTable(idle_timeout=config.MAPPING_IDLE_TIMEOUT)
     logger.info("proxy 啟動\n%s", config.startup_summary())
     if not config.UPSTREAM_API_KEY:
         logger.warning("找不到上游金鑰，轉發一定會失敗。請確認 .env 內的變數名稱。")

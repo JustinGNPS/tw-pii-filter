@@ -6,7 +6,14 @@
 
 import pytest
 
-from proxy.mapping import FALLBACK_TYPE, TOKEN_PATTERN, MappingTable, normalize_type
+from proxy import mapping
+from proxy.mapping import (
+    DEFAULT_IDLE_TIMEOUT,
+    FALLBACK_TYPE,
+    TOKEN_PATTERN,
+    MappingTable,
+    normalize_type,
+)
 
 
 def test_同一個真值永遠拿到同一個佔位符():
@@ -180,3 +187,90 @@ class Test佔位符樣式:
         """程式碼裡的陣列語法不該被當成佔位符。"""
         for text in ("items[0]", "list[i]", "[TODO]", "[abc_1]", "[]"):
             assert not TOKEN_PATTERN.search(text), text
+
+
+class Test閒置逾時清除:
+    """對照表是明文個資，不該無限期駐留 —— 見 docs/B_design.md 決定 11。
+
+    只在 `token_for()` 檢查、`value_for()` 刻意不檢查，用 monkeypatch 控制
+    `time.monotonic()` 讓測試不必真的等待。
+    """
+
+    def _fake_clock(self, monkeypatch, start: float = 0.0):
+        """回傳一個可以手動撥動的假時鐘（list 包一個數字，方便在測試裡改）。"""
+        clock = [start]
+        monkeypatch.setattr(mapping.time, "monotonic", lambda: clock[0])
+        return clock
+
+    def test_閒置超過門檻時下一次呼叫前會清空(self, monkeypatch):
+        clock = self._fake_clock(monkeypatch)
+        table = MappingTable(idle_timeout=10.0)
+
+        table.token_for("TW_ID", "A123456789")
+        clock[0] = 5.0
+        table.token_for("EMAIL", "a@example.com")
+        assert len(table) == 2
+
+        clock[0] = 20.0  # 距上次動作（5.0）已經 15 秒，超過門檻 10 秒
+        token = table.token_for("TW_ID", "A123456789")
+
+        assert token == "[TW_ID_1]"  # 重新配號（舊表已被清空，不是延續舊號碼）
+        assert len(table) == 1  # EMAIL 那筆被清掉了，只剩剛剛新配的這筆
+
+    def test_閒置未超過門檻不會清空(self, monkeypatch):
+        clock = self._fake_clock(monkeypatch)
+        table = MappingTable(idle_timeout=10.0)
+
+        table.token_for("TW_ID", "A123456789")
+        clock[0] = 9.0  # 未超過門檻
+        table.token_for("EMAIL", "a@example.com")
+
+        assert len(table) == 2  # 兩筆都還在
+
+    def test_value_for_不會觸發閒置清空(self, monkeypatch):
+        """還原路徑刻意不檢查逾時——避免長時間串流還原被自己觸發的清空打斷。"""
+        clock = self._fake_clock(monkeypatch)
+        table = MappingTable(idle_timeout=10.0)
+        token = table.token_for("TW_ID", "A123456789")
+
+        clock[0] = 999.0  # 遠遠超過門檻
+        assert table.value_for(token) == "A123456789"  # 還查得到，沒被清空
+        assert len(table) == 1
+
+    def test_idle_timeout為None時永不自動清空(self, monkeypatch):
+        clock = self._fake_clock(monkeypatch)
+        table = MappingTable(idle_timeout=None)
+
+        table.token_for("TW_ID", "A123456789")
+        clock[0] = 10_000_000.0
+        table.token_for("EMAIL", "a@example.com")
+
+        assert len(table) == 2  # 沒被清空
+
+    def test_預設逾時是_1800_秒(self, monkeypatch):
+        clock = self._fake_clock(monkeypatch)
+        assert DEFAULT_IDLE_TIMEOUT == 1800.0
+
+        table = MappingTable()  # 不傳 idle_timeout，用預設值
+        table.token_for("TW_ID", "A123456789")
+
+        clock[0] = 1799.0  # 未超過
+        table.token_for("EMAIL", "a@example.com")
+        assert len(table) == 2
+
+        clock[0] = 1799.0 + 1800.1  # 距上次動作（1799.0）超過 1800 秒
+        table.token_for("TW_TAX", "12345675")
+        assert len(table) == 1  # 前兩筆被清空了
+
+    def test_手動_clear_也會重置閒置計時(self, monkeypatch):
+        """clear() 之後閒置計時器要重新起算，不能讓下一次呼叫誤判成早就過期。"""
+        clock = self._fake_clock(monkeypatch)
+        table = MappingTable(idle_timeout=10.0)
+        table.token_for("TW_ID", "A123456789")
+
+        clock[0] = 5.0
+        table.clear()
+
+        clock[0] = 12.0  # 距 clear() 的時間（5.0）只過了 7 秒，未超過門檻
+        table.token_for("EMAIL", "a@example.com")
+        assert len(table) == 1  # 沒有被誤判成過期又清一次（只是本來就空的）

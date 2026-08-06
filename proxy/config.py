@@ -9,7 +9,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from proxy.mapping import normalize_type
+from proxy.mapping import DEFAULT_IDLE_TIMEOUT, normalize_type
 
 # repo 根目錄的 .env（proxy/config.py -> proxy/ -> repo 根）
 _REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -90,6 +90,18 @@ SKIP_TYPES = _parse_skip_types(
 # 設定方式：`.env` 或環境變數 `PII_ENABLE_NER=1`（或 `true`/`yes`，大小寫不拘）。
 ENABLE_NER = os.getenv("PII_ENABLE_NER", "").strip().lower() in ("1", "true", "yes")
 
+# 對照表閒置逾時（秒）-------------------------------------------------------
+#
+# 對照表是明文個資，不該無限期駐留 —— 見 docs/B_design.md 決定 11。閒置超過
+# 這段時間，下一次遮蔽動作前會整張清空重來（不影響正在進行中的還原，見
+# `proxy/mapping.py::MappingTable` 的說明）。
+#
+# 設定方式：`.env` 或環境變數 `PROXY_MAPPING_IDLE_TIMEOUT`（秒）。設成 `0`
+# 代表停用（僅供除錯／demo 時觀察數字持續累積用，正式使用不建議關閉）。
+MAPPING_IDLE_TIMEOUT = float(
+    os.getenv("PROXY_MAPPING_IDLE_TIMEOUT", str(DEFAULT_IDLE_TIMEOUT))
+)
+
 
 def startup_summary() -> str:
     """啟動時印的設定摘要 —— 只印變數名稱與 base URL，**不印金鑰內容**。"""
@@ -102,5 +114,6 @@ def startup_summary() -> str:
         f"上游金鑰：{key_status}\n"
         f"預設模型：{DEFAULT_MODEL}\n"
         f"偵測到但不遮蔽的型別：{skipped}\n"
-        f"語意層（NER）：{'已啟用' if ENABLE_NER else '未啟用（僅規則層）'}"
+        f"語意層（NER）：{'已啟用' if ENABLE_NER else '未啟用（僅規則層）'}\n"
+        f"對照表閒置逾時：{f'{MAPPING_IDLE_TIMEOUT:.0f} 秒' if MAPPING_IDLE_TIMEOUT else '停用'}"
     )
