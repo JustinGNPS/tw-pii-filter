@@ -19,18 +19,17 @@ export type RulePiiType =
 /**
  * 語意層（Layer 2）的類別代碼。
  *
- * ⚠️ 這些代碼**還沒進 docs/interface.md**，命名也尚未定案（PR #3 討論中）：
- * D 實測 `gyr66/bert-base-chinese-finetuned-ner` 的 `entity_group` 實際回傳的是
- * `name` / `address` / `position`，不是先前推測的 `PERSON` / `LOCATION` / `ORG`。
- * 這裡兩套都先列上，等 interface.md 定案後收斂成一套。
+ * 來源是 `core/ner/detector.py`：模型的 `entity_group` 經 `.upper()` 後輸出。
+ * 先前這裡列的 `name` / `address` / `position` 小寫版與 `PERSON` / `LOCATION` /
+ * `ORG` 都已作廢——小寫版在型別代碼統一轉大寫後不再出現（見下），
+ * `PERSON` 那組則是實測前的推測，從未真正產生過。
+ *
+ * ⚠️ 這四個代碼**仍未列進 docs/interface.md 的類別代碼表**，
+ * 而該文件自己要求「新增類別代碼時，應同步更新本文件並知會全隊」。
+ * 目前三個模組各自從 PR 討論裡抄代碼，這正是本檔案上一版會過時的原因。
+ * 已請 A 補進 interface.md；補上後這裡應以文件為準。
  */
-export type ModelPiiType =
-  | 'name'
-  | 'address'
-  | 'position'
-  | 'PERSON'
-  | 'LOCATION'
-  | 'ORG';
+export type ModelPiiType = 'NAME' | 'ADDRESS' | 'POSITION' | 'COMPANY';
 
 /**
  * 類別代碼。

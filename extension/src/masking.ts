@@ -34,15 +34,20 @@ const TYPE_META: Record<string, { label: string; risk: RiskLevel }> = {
   TW_PHONE_L: { label: '市內電話', risk: 'medium' },
   EMAIL: { label: '電子郵件', risk: 'low' },
 
-  // ── Layer 2 語意層（代碼尚未定案，PR #3 討論中，兩套命名都先支援）──
-  name: { label: '人名', risk: 'medium' },
-  address: { label: '地址 / 地點', risk: 'medium' },
-  // position（職稱）本身通常不是個資，但在準識別子組合下會提高再識別風險，
-  // 因此保留偵測但列為低風險，預設由使用者自行決定要不要遮蔽。
-  position: { label: '職稱', risk: 'low' },
-  PERSON: { label: '人名', risk: 'medium' },
-  LOCATION: { label: '地址 / 地點', risk: 'medium' },
-  ORG: { label: '機構名稱', risk: 'low' },
+  // ── Layer 2 語意層（來源：core/ner/detector.py，entity_group 轉大寫後輸出）──
+  NAME: { label: '人名', risk: 'medium' },
+  ADDRESS: { label: '地址 / 地點', risk: 'medium' },
+  // POSITION（職稱）與 COMPANY（公司名稱）本身通常不算個資，但都是準識別子：
+  // 「35 歲」+「新竹」+「資深後端工程師」不需要姓名就能指認到特定個人，
+  // 這正是 Layer 3 組合風險評分要吃的資訊（專題報告 4.3：隱含身分洩漏率 95%）。
+  // 因此保留偵測但列為低風險，預設勾選、由使用者自行決定要不要遮蔽——
+  // 若在偵測層就濾掉，Layer 3 之後會沒有東西可算。
+  //
+  // 註：proxy 端（B）的 normalize_type 預設跳過 POSITION 不遮蔽。兩個載體
+  // 取捨不同是刻意的：proxy 沒有人在旁邊確認、誤遮會直接弄壞 agent 的程式碼；
+  // 擴充有確認面板，使用者看得到也能取消勾選，可以更保守地多抓一些。
+  POSITION: { label: '職稱', risk: 'low' },
+  COMPANY: { label: '公司名稱', risk: 'low' },
 };
 
 /** 語意層代碼還在變動，遇到沒見過的一律照原樣顯示、不要壞掉。 */
