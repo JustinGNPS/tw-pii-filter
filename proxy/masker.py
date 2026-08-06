@@ -22,6 +22,7 @@ A 的 `detect_all()` 內部已做 Layer 4 重疊仲裁，spans 保證互不重�
 from collections.abc import Iterable
 
 from proxy import config, detector
+from proxy.cache import DetectionCache
 from proxy.mapping import MappingTable, normalize_type
 
 
@@ -63,6 +64,7 @@ def mask_text(
 def mask_payload(
     payload: dict,
     table: MappingTable,
+    cache: DetectionCache | None = None,
     skip_types: Iterable[str] | None = None,
 ) -> dict[str, int]:
     """就地遮蔽整包 payload，回傳「型別 -> 遮蔽筆數」的摘要。
@@ -77,7 +79,7 @@ def mask_payload(
     skip = resolve_skip_types(skip_types)
     counts: dict[str, int] = {}
 
-    for result in detector.scan_payload(payload):
+    for result in detector.scan_payload(payload, cache):
         spans = _to_mask(result["spans"], skip)
         if not spans:
             continue  # 這個欄位偵測到的全被跳過，原樣保留

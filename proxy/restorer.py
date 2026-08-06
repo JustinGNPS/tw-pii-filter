@@ -112,7 +112,7 @@ class StreamRestorer:
 class SSERestorer:
     """在 SSE 位元組串流上做還原。
 
-    比 `StreamRestorer` 多處理兩件事：
+    比 `StreamRestorer` 多處理三件事：
 
     1. **佔位符可能跨事件**。AI 是一個 token 一個 token 產生的，
        `[TW_ID_1]` 很可能拆在兩個 SSE 事件的 `delta.content` 裡：
@@ -130,8 +130,19 @@ class SSERestorer:
     2. **多位元組字元可能被切在兩個位元組區塊之間**。中文佔 3 個位元組，
        直接對每個 chunk 呼叫 `decode()` 會炸，因此用增量解碼器。
 
-    目前處理 OpenAI chat completions 的串流格式（`choices[].delta.content`）。
-    其他協定（如 Anthropic）欄位位置不同，屆時在此擴充即可。
+    3. **佔位符也可能藏在 `delta.tool_calls[].function.arguments` 裡，
+       不只是 `delta.content`**。用 function calling 做檔案編輯的 agent
+       （例如 OpenCode，經 OpenCode 實測發現此問題），實際要寫入檔案的
+       內容是放在工具呼叫的參數裡，不是普通文字回覆。這條路徑原本完全
+       沒被處理——不是轉換邏輯錯誤，是**這段程式碼從來沒讀過這個欄位**，
+       導致佔位符原封不動地被寫進使用者的檔案（比沒遮到更糟）。
+       每個工具呼叫用自己的 `index` 區分（同一個回覆裡可能同時有多個
+       工具呼叫在串流），因此每個 index 各自維護一個 `StreamRestorer`，
+       不能共用一個 buffer，否則不同工具呼叫的內容會互相插斷、拼錯。
+
+    目前處理 OpenAI chat completions 的串流格式（`choices[].delta.content`、
+    `choices[].delta.tool_calls[].function.arguments`）。其他協定
+    （如 Anthropic）欄位位置不同，屆時在此擴充即可。
     """
 
     _EVENT_SEPARATOR = "\n\n"
@@ -139,18 +150,24 @@ class SSERestorer:
     _DONE = "[DONE]"
 
     def __init__(self, table: MappingTable) -> None:
+        self._table = table
         self._text = StreamRestorer(table)
+        self._tool_call_texts: dict[int, StreamRestorer] = {}
         self._decoder = codecs.getincrementaldecoder("utf-8")()
         self._pending = ""  # 尚未收完的事件
         self._template: dict | None = None  # 最後一個事件，收尾時當範本用
 
     @property
     def restored(self) -> int:
-        return self._text.restored
+        return self._text.restored + sum(
+            t.restored for t in self._tool_call_texts.values()
+        )
 
     @property
     def unknown(self) -> int:
-        return self._text.unknown
+        return self._text.unknown + sum(
+            t.unknown for t in self._tool_call_texts.values()
+        )
 
     def feed(self, chunk: bytes) -> bytes:
         self._pending += self._decoder.decode(chunk)
@@ -169,10 +186,29 @@ class SSERestorer:
             out += self._process(self._pending)
             self._pending = ""
 
+        leftover_events = self._flush_leftover_events()
+        if leftover_events:
+            prefix = "".join(e + self._EVENT_SEPARATOR for e in leftover_events)
+            out = prefix + out
+        return out.encode("utf-8")
+
+    def _flush_leftover_events(self) -> list[str]:
+        """把 `content` 與每個工具呼叫參數 buffer 裡殘留的內容，各自包成一個
+        SSE 事件。必須在 `[DONE]` 之前呼叫，否則殘留內容（可能是還沒等到
+        `]` 的半個佔位符）會被永遠遺失——文字內容遺失頂多是漏了幾個字，
+        工具呼叫參數遺失則是直接把 JSON 弄殘，agent 那邊會解析失敗。
+        """
+        events = []
         leftover = self._text.flush()
         if leftover:
-            out = self._as_event(leftover) + self._EVENT_SEPARATOR + out
-        return out.encode("utf-8")
+            event = self._as_content_event(leftover)
+            if event:
+                events.append(event)
+        for index in sorted(self._tool_call_texts):
+            leftover = self._tool_call_texts[index].flush()
+            if leftover:
+                events.append(self._as_tool_call_event(index, leftover))
+        return events
 
     def _process(self, block: str) -> str:
         """處理一個完整的 SSE 事件區塊。無法解析時原樣回傳。"""
@@ -184,11 +220,10 @@ class SSERestorer:
 
             data = line[len(self._DATA_PREFIX) :]
             if data.strip() == self._DONE:
-                # [DONE] 之前必須先把 buffer 裡剩下的文字送出去，
+                # [DONE] 之前必須先把所有 buffer 裡剩下的文字送出去，
                 # 否則結尾的半個佔位符會永遠卡住
-                leftover = self._text.flush()
-                if leftover:
-                    lines.append(self._as_event(leftover))
+                for event in self._flush_leftover_events():
+                    lines.append(event)
                     lines.append("")
                 lines.append(line)
                 continue
@@ -206,7 +241,9 @@ class SSERestorer:
         return "\n".join(lines)
 
     def _restore_in_place(self, obj: dict) -> None:
-        """把事件裡每個 `delta.content` 換成還原後（可能較短）的文字。"""
+        """把事件裡每個 `delta.content` 與 `delta.tool_calls[].function.arguments`
+        換成還原後（可能較短）的文字。
+        """
         choices = obj.get("choices")
         if not isinstance(choices, list):
             return
@@ -214,10 +251,36 @@ class SSERestorer:
             if not isinstance(choice, dict):
                 continue
             delta = choice.get("delta")
-            if isinstance(delta, dict) and isinstance(delta.get("content"), str):
+            if not isinstance(delta, dict):
+                continue
+            if isinstance(delta.get("content"), str):
                 delta["content"] = self._text.feed(delta["content"])
+            self._restore_tool_calls(delta.get("tool_calls"))
 
-    def _as_event(self, content: str) -> str:
+    def _restore_tool_calls(self, tool_calls: object) -> None:
+        """還原每個工具呼叫的 `function.arguments`。
+
+        用 `index` 分開 buffer——同一個回覆裡可能同時有多個工具呼叫在串流
+        （例如一次改兩個檔案），共用一個 buffer 會讓不同呼叫的內容互相插斷。
+        """
+        if not isinstance(tool_calls, list):
+            return
+        for call in tool_calls:
+            if not isinstance(call, dict):
+                continue
+            index = call.get("index")
+            if not isinstance(index, int):
+                continue
+            function = call.get("function")
+            if not isinstance(function, dict):
+                continue
+            arguments = function.get("arguments")
+            if not isinstance(arguments, str):
+                continue
+            buffer = self._tool_call_texts.setdefault(index, StreamRestorer(self._table))
+            function["arguments"] = buffer.feed(arguments)
+
+    def _as_content_event(self, content: str) -> str:
         """把殘留文字包成一個 SSE 事件，沿用最後一個事件的外框。"""
         if self._template is None:
             return ""
@@ -227,4 +290,25 @@ class SSERestorer:
             choices[0]["delta"] = {"content": content}
             choices[0].pop("finish_reason", None)
             del choices[1:]
+        return self._DATA_PREFIX + json.dumps(obj, ensure_ascii=False)
+
+    def _as_tool_call_event(self, index: int, arguments: str) -> str:
+        """把某個工具呼叫殘留的參數文字包成一個 SSE 事件。
+
+        延續片段只需要 `index` 讓 agent 端的 SDK 認得是同一個工具呼叫的
+        接續內容——OpenAI 的串流格式本來就只有第一個事件會帶 `id`／
+        `function.name`，接續事件只有 `arguments` 片段，不需要重複。
+        """
+        obj = {
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": {
+                        "tool_calls": [
+                            {"index": index, "function": {"arguments": arguments}}
+                        ]
+                    },
+                }
+            ]
+        }
         return self._DATA_PREFIX + json.dumps(obj, ensure_ascii=False)

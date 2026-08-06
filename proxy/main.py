@@ -14,6 +14,7 @@ agent 那邊把 base URL 指到 `http://localhost:8000/v1` 即可。
 （實測 Aider 會回報 SEARCH/REPLACE block failed to match）。
 """
 
+import asyncio
 import json
 import logging
 import sys
@@ -46,10 +47,20 @@ _SCANNED_PATHS = ("chat/completions", "completions", "embeddings", "responses")
 async def lifespan(app: FastAPI):
     app.state.client = forward.make_client()
     # 對照表只存在記憶體，隨行程結束消失 —— 真實個資不落地
-    app.state.mapping = MappingTable()
+    # 閒置逾時後會自動清空（決定 11），逾時秒數見 config.MAPPING_IDLE_TIMEOUT
+    app.state.mapping = MappingTable(idle_timeout=config.MAPPING_IDLE_TIMEOUT)
     logger.info("proxy 啟動\n%s", config.startup_summary())
     if not config.UPSTREAM_API_KEY:
         logger.warning("找不到上游金鑰，轉發一定會失敗。請確認 .env 內的變數名稱。")
+    if config.ENABLE_NER:
+        # core/ner/detector.py 的 `_get_detector()` 單例目前沒有鎖（C 在 PR #11
+        # review 抓到：`asyncio.to_thread` 讓多個請求可能真的並行進 thread pool，
+        # 冷啟動時兩個請求可能同時把 BERT 模型各載入一次）。啟動時先跑一次把
+        # 單例建好，之後第一個真實請求就不用再付模型載入的錢，也大幅縮小併發
+        # 撞上的窗口 —— 但單例本身沒鎖這件事仍待 D 在 core/ner/detector.py 修，
+        # 這裡只是治標。
+        await asyncio.to_thread(detector._extra_spans, "")
+        logger.info("語意層模型已預熱")
     try:
         yield
     finally:
@@ -67,12 +78,19 @@ async def healthz() -> dict:
         "upstream": config.UPSTREAM_BASE_URL,
         "upstream_key_loaded": bool(config.UPSTREAM_API_KEY),
         "mode": "masking",  # 第二版：遮蔽 + 還原
+        "ner_enabled": config.ENABLE_NER,
         "mapping_entries": len(app.state.mapping),
+        "detection_cache": detector.CACHE.stats(),
     }
 
 
 def _mask_request(path: str, body: bytes, table: MappingTable) -> tuple[bytes, float]:
     """遮蔽請求內容，回傳 (要送出的 body, 花費的毫秒數)。
+
+    這是同步函式，由 `_proxy` 透過 `asyncio.to_thread` 丟到 thread pool 執行，
+    不佔用 event loop。純規則層時這筆成本只有幾毫秒，感覺不出差別；但
+    `PII_ENABLE_NER=1` 開啟語意層後單次偵測約 742 ms（CPU），若直接在
+    event loop 裡同步跑，會擋住同一個 proxy 行程裡的其他請求排隊等它。
 
     遮蔽或解析失敗一律吞掉並原樣轉發 —— proxy 的第一要務是不要弄壞 agent。
     代價是那次請求不受保護，因此失敗會以 ERROR 等級留下紀錄。
@@ -87,7 +105,11 @@ def _mask_request(path: str, body: bytes, table: MappingTable) -> tuple[bytes, f
         if counts:
             body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
             # 只印型別與筆數，絕不印遮蔽掉的原始內容
-            logger.warning("已遮蔽：%s", detector.format_warning(counts))
+            logger.warning(
+                "已遮蔽：%s｜快取命中率 %.0f%%",
+                detector.format_warning(counts),
+                detector.CACHE.hit_rate * 100,
+            )
     except json.JSONDecodeError:
         pass  # 不是 JSON（例如檔案上傳），本來就沒得掃
     except Exception as exc:  # noqa: BLE001 - 遮蔽失敗不能讓 agent 拿不到回覆
@@ -98,7 +120,7 @@ def _mask_request(path: str, body: bytes, table: MappingTable) -> tuple[bytes, f
 async def _proxy(path: str, request: Request) -> Response:
     table: MappingTable = request.app.state.mapping
     body = await request.body()
-    body, detect_ms = _mask_request(path, body, table)
+    body, detect_ms = await asyncio.to_thread(_mask_request, path, body, table)
 
     started = time.perf_counter()
     upstream = await forward.open_upstream(
