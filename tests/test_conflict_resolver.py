@@ -2,7 +2,7 @@
 
 import unittest
 
-from core.rules.conflict_resolver import resolve_overlaps
+from core.rules.conflict_resolver import renumber_replacements, resolve_overlaps
 
 
 def _span(start, end, type_="X", confidence=0.9, source="rule", text=None):
@@ -113,6 +113,42 @@ class ResultInvariantTests(unittest.TestCase):
 
         types_kept = {span["type"] for span in result}
         self.assertEqual(types_kept, {"A", "D", "E"})
+
+
+class RenumberReplacementsTests(unittest.TestCase):
+    """resolve_overlaps 之後的重新編號，確保不因移除的 span 而跳號。"""
+
+    def test_renumbers_sequentially_per_type_in_start_order(self):
+        spans = [
+            _span(0, 5, type_="A", text="a1"),
+            _span(10, 15, type_="B", text="b1"),
+            _span(20, 25, type_="A", text="a2"),
+            _span(30, 35, type_="B", text="b2"),
+        ]
+
+        result = renumber_replacements(spans)
+
+        self.assertEqual(
+            [span["replacement"] for span in result],
+            ["[A_1]", "[B_1]", "[A_2]", "[B_2]"],
+        )
+
+    def test_closes_gap_left_by_a_span_removed_during_conflict_resolution(self):
+        # 兩個同 type 的 span，其中較早出現的那個會在衝突解析時輸給
+        # 另一個較大範圍的 span 而被移除；剩下的那個原本編號是第 2 筆，
+        # 重新編號後應該變成第 1 筆，不留下缺口。
+        loser = _span(0, 5, type_="TW_ID", text="loser")
+        winner = _span(0, 20, type_="EMAIL", text="winner")
+        survivor = _span(30, 35, type_="TW_ID", text="survivor")
+        survivor["replacement"] = "[TW_ID_2]"  # 原始（未經仲裁）編號
+
+        resolved = resolve_overlaps([loser, winner, survivor])
+        result = renumber_replacements(resolved)
+
+        tw_id_spans = [span for span in result if span["type"] == "TW_ID"]
+        self.assertEqual(len(tw_id_spans), 1)
+        self.assertEqual(tw_id_spans[0]["text"], "survivor")
+        self.assertEqual(tw_id_spans[0]["replacement"], "[TW_ID_1]")
 
 
 if __name__ == "__main__":

@@ -60,15 +60,6 @@ class NERDetector:
     # 不是完整解法——過濾條件仍可能誤殺極少數合法的短地址，需持續觀察調整）。
     ADDRESS_INDICATOR_CHARS = set("市縣區鄉鎮村里路街巷弄號樓段道")
 
-    # 完全排除的型別：實測發現模型對這些型別的偵測是破碎雜訊，沒有任何補強價值。
-    # 回應 B 的假設（全形手機規則層抓不到，語意層說不定能補上）——實測結果剛好
-    # 相反：半形手機語意層完全偵測不到（MOBILE 型別等於不存在）；全形手機語意層
-    # 只抓到單一個全形數字字元、還誤標成 EMAIL；半形信箱語意層抓到的是破碎片段
-    # （單獨的 "@"、單獨的 ".com"），不是完整信箱。這兩個型別規則層本來就用
-    # 正則/格式驗證處理得又快又準，語意層在這裡不只沒有互補價值，還會製造雜訊
-    # 實體，故直接排除，不送給下游。
-    EXCLUDED_TYPES = {"EMAIL", "MOBILE"}
-
     # 分段處理相關常數（回應 B 7/31 提出、實測確認存在的 512 token 截斷問題）：
     # 模型 tokenizer.model_max_length = 512，實測 1501 字元的文字會產生 788 個
     # token（換算約 1.9 字元/token），超過上限的部分會被模型忽略、完全不會報錯，
@@ -107,10 +98,6 @@ class NERDetector:
             end = ent.get("end")
             entity_text = text[start:end]
             entity_type = ent.get("entity_group", "").upper()
-
-            # 完全排除的型別（EMAIL/MOBILE）：實測是破碎雜訊，規則層處理得更好
-            if entity_type in self.EXCLUDED_TYPES:
-                continue
 
             # 地址合理性檢查：不含任何地址關鍵字的字串（例如斷詞邊界切出來的
             # 「啡廳」）視為雜訊，直接過濾，不送給下游

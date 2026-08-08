@@ -1,21 +1,133 @@
 # API Proxy（載體二：AI coding agent 防護）
 
-攔截 AI coding agent 送往雲端 LLM 的請求，在本地完成 PII 偵測。
+攔截 AI coding agent 送往雲端 LLM 的請求，在本地完成 PII 偵測、遮蔽與還原。
 
 ```
 Agent（Aider / Cline / Continue / Codex / OpenCode）
+      │ 客戶 A123456789
       ↓ 以為自己在打 OpenAI
   本 proxy（localhost:8000）
-      ↓ core.rules.detect_all() 偵測
-   上游 LLM（長庚 AIR）
+      │ ① core.rules.detect_all() 找出個資
+      │ ② 換成佔位符，對照表記在記憶體裡
+      ↓ 客戶 [TW_ID_1]
+   上游 LLM（長庚 AIR）      ← 雲端從頭到尾看不到真值
+      │ ...[TW_ID_1]...
       ↓
-  本 proxy → Agent
+  本 proxy  ③ 查對照表換回真值（含 SSE 串流重組）
+      ↓ ...A123456789...
+   Agent                    ← 與沒裝過濾器時完全一致
 ```
 
-## 目前版本：透明轉發 + 只警告
+## 目前版本：遮蔽 + 還原
 
-依 PDF §7.3，第一版**不修改請求內容**，偵測到個資時只在 proxy 的 log 印出
-型別與筆數。遮蔽與還原是下一版。
+**遮蔽與還原必須同時啟用。** 只遮蔽不還原會讓 agent 的 diff 比對失敗
+—— 實測 Aider 會回報 `SEARCH/REPLACE block failed to match!`，因為 AI 依
+「已遮蔽」的內容產生 SEARCH 區塊，Aider 拿去比對硬碟上「未遮蔽」的檔案。
+
+### 對照表只存記憶體
+
+真實個資**不寫入任何檔案**，proxy 行程結束即消失。不產生的東西不可能外洩，
+也就不需要處理加密、權限與刪除時機。
+
+### 閒置逾時自動清空對照表
+
+對照表存的是明文個資，不該無限期駐留——閒置超過 `PROXY_MAPPING_IDLE_TIMEOUT`
+秒（預設 1800 秒／30 分鐘）沒有新的遮蔽動作，下一次遮蔽前會整張清空重來。
+
+只在遮蔽（`token_for()`）時檢查，**不在還原時檢查**：還原永遠緊接在同一次
+請求的遮蔽之後，遮蔽當下沒清空、還原就不會撲空；若還原也做這個檢查，長時間
+串流中的還原可能被自己觸發的清空打斷。清空是安全的——AI 的回覆在離開 proxy
+前就已經把佔位符還原成真值，agent 端保存的對話歷史從頭到尾都是真值，不會有
+「佔位符指向已清空的對照」這種情況，唯一的代價是佔位符數字重新從 1 開始。
+
+### 號碼由 proxy 自己發
+
+不直接採用 A 的 `replacement` 欄位。A 每次都從 1 重新編號，而 agent 每次請求
+都會重送整段對話歷史，同一真值可能在不同次請求拿到不同號碼、號碼也可能被別的
+真值佔用 —— 還原時會把兩個人的個資對調。因此**一個真值第一次出現時配一個號碼，
+之後永遠是那個號碼**。
+
+### 型別代碼一律正規化成大寫
+
+`mapping.normalize_type()` 會把任何型別代碼轉成 `[A-Z][A-Z_]*` 的形式
+（`name` → `NAME`）。**只做格式正規化，不做語意改名** —— 不會自作主張把
+`name` 改成 `PERSON`，對外的類別代碼叫什麼是 `docs/interface.md` 的決定。
+
+為什麼需要：語意層（D 的 NER）回傳的是模型的 `entity_group`，實測是小寫的
+`name` / `address` / `position`。若原樣拿去發號碼會產生 `[name_1]`，而還原用的
+`TOKEN_PATTERN` 只認大寫 —— **遮蔽成功、還原失效**，佔位符會被寫進使用者的檔案。
+
+正則不放寬成接受小寫，是因為 `[abc_1]` 這種寫法在程式碼裡很常見，放寬會讓還原
+去動到不該動的東西。**把入口收乾淨，比把出口放寬安全。**
+
+順帶解掉一個撞號風險：`name` 與 `NAME` 若被當成兩個型別，兩邊都從 1 號開始發，
+會產生兩個 `[NAME_1]` 指向不同的人。
+
+### 偵測得到、但不遮蔽的型別
+
+語意層會回傳 `position`（客服／客戶／工程師這類職稱），信心分數往往很高，
+但職稱本身不是個資。遮掉它對隱私沒有幫助，卻會讓 agent 讀不懂上下文。
+預設跳過，可用 `PII_SKIP_TYPES` 調整（見下方環境變數表）。
+
+### 還原涵蓋文字回覆與工具呼叫兩種路徑
+
+AI 有兩種方式把「要怎麼改檔案」告訴 agent：**純文字回覆**（`delta.content`，
+Aider 這類 diff-edit 工具走這條）或 **function calling**（`delta.tool_calls[]
+.function.arguments`，OpenCode 這類用內建編輯工具的 agent 走這條）。兩條路徑
+都會被 `SSERestorer` 還原；同一回覆裡可能同時有多個工具呼叫在串流，各自
+用 `index` 維護獨立的 buffer，避免內容互相插斷拼錯。
+
+⚠️ **這是實測跑出來的教訓，不是預先設計好的**：第一版只處理了
+`delta.content`，用 OpenCode 端到端測試時發現使用者的檔案被寫進
+`[TW_ID_1]` 這類佔位符——因為 OpenCode 用 function calling 編輯檔案，
+內容根本沒經過當時唯一會檢查的那個欄位。log 當下顯示「還原 0 筆」，
+這個訊號本身就是破案關鍵。詳見 `docs/B_design.md`「已知限制」一節。
+
+### 語意層（D 的 NER）：預設關閉，選配開啟
+
+`proxy/detector.py` 已接上 `core.ner.detect_ner()`，會把語意層結果當
+`extra_spans` 一起送進 `detect_all()` 仲裁。**規則層與語意層各自獨立掃描
+同一段文字，只在最後由 Layer 4 合併、仲裁重疊** —— 規則層的 8 種型別不會
+經過語意層判斷，反之亦然。
+
+預設**關閉**（`PII_ENABLE_NER` 沒設定或設為空），只跑規則層。原因：
+
+- 語意層單次推論（CPU）約 2412 ms，是規則層（2〜4 ms）的六百多倍，
+  且是同步阻塞呼叫，開著會讓每個請求都平白多付這筆延遲。這個數字是
+  D 修好 512 token 靜默截斷的 bug 後重新量測的結果（原本的 742 ms
+  是「沒掃完整份文字」測出來的假快，已作廢，見 PR #15）
+- `core.ner.detector` 內部會 `import torch` / `transformers`，這兩個套件
+  很重（GB 等級 + 模型權重）。關閉時 proxy 完全不 import 這個模組，
+  不需要安裝 `core/ner/requirements.txt` 也能跑
+
+要展示姓名/地址遮蔽效果時，設 `PII_ENABLE_NER=1`（先 `pip install -r
+core/ner/requirements.txt`）。遮蔽本身（`_mask_request`）已經用
+`asyncio.to_thread` 丟到背景執行緒跑，開啟語意層後也不會卡住 event loop
+上其他請求。
+
+### 已知取捨
+
+同一真值永遠對到同一佔位符，因此雲端 AI 可以看出「這兩處是同一個人」
+（關聯性洩漏），但看不到真實身分。若每次都換不同佔位符，agent 的 diff
+比對就會失敗，因此一致性是必要的。
+
+## 環境需求
+
+| 項目 | 版本 |
+|---|---|
+| Python | 3.11 |
+| 相依套件 | 見 `proxy/requirements.txt`（版本鎖死） |
+| 作業系統 | 不限，目前在 Windows 11 開發 |
+| 網路 | 需能連到上游 LLM；proxy 本身只聽 localhost |
+
+## 安裝
+
+在 repo 根目錄：
+
+```powershell
+python -m venv .venv
+.venv\Scripts\python.exe -m pip install -r proxy/requirements.txt
+```
 
 ## 環境變數
 
@@ -29,8 +141,15 @@ Agent（Aider / Cline / Continue / Codex / OpenCode）
 | 預設模型 | `DEFAULT_MODEL`、`OPENAI_MODEL`、`AIR_MODEL` | `gpt-4.1-mini` |
 | 連線逾時（秒） | `PROXY_CONNECT_TIMEOUT` | `10` |
 | 讀取逾時（秒） | `PROXY_READ_TIMEOUT` | `600` |
+| 不遮蔽的型別（逗號分隔） | `PII_SKIP_TYPES` | `POSITION` |
+| 啟用語意層（NER） | `PII_ENABLE_NER` | 關閉（僅規則層） |
+| 對照表閒置逾時（秒，`0` 代表停用） | `PROXY_MAPPING_IDLE_TIMEOUT` | `1800`（30 分鐘） |
 
-金鑰只在 proxy 這一側；agent 那邊可以填假的。
+`PII_SKIP_TYPES` 設成空字串代表**什麼都不跳過**（連職稱也遮）。
+大小寫都吃，內部會做同一套正規化。啟動時會把實際生效的清單印出來。
+
+**建議用 `UPSTREAM_API_KEY`** —— `OPENAI_API_KEY` 會與 agent 自己的設定撞名。
+真金鑰只存在 proxy 這一側，agent 那邊填假的即可。
 
 ## 啟動
 
@@ -42,6 +161,7 @@ Agent（Aider / Cline / Continue / Codex / OpenCode）
 
 ```powershell
 curl http://localhost:8000/healthz
+# {"status":"ok","mode":"masking","mapping_entries":0, ...}
 ```
 
 ## 讓 agent 走 proxy
@@ -54,19 +174,55 @@ $env:OPENAI_API_KEY  = "dummy"   # 真金鑰在 proxy 那邊
 aider --model gpt-4.1-mini
 ```
 
+其他 agent 只需要把 base URL 指過來，**proxy 本身不用改**。
+唯一例外是 **Cursor**：走自家後端，攔不到，誠實列為不支援。
+
 ## 測試
 
 ```powershell
 .venv\Scripts\python.exe -m pytest tests -q
 ```
 
-`tests/test_proxy.py` 用 `respx` 假造上游，**不會打真實 API、不需要金鑰**。
+`tests/` 底下與 proxy 相關的測試全部用 `respx` 假造上游，
+**不會打真實 API、不需要金鑰**，組員與 CI 都能直接跑。
 
 ## 檔案
 
 | 檔案 | 職責 |
 |---|---|
-| `main.py` | FastAPI 應用、路由、log、SSE 串流處理 |
-| `forward.py` | httpx 轉發、標頭改寫 |
+| `main.py` | FastAPI 應用、路由、log、串流處理 |
+| `forward.py` | httpx 轉發、標頭改寫、金鑰替換 |
 | `detector.py` | 包住 A 的 `detect_all()`、從 payload 挖出該掃的欄位 |
+| `masker.py` | 遮蔽（**從後往前**替換，避免座標位移） |
+| `restorer.py` | 還原（非串流整包替換 + SSE 逐事件重組） |
+| `mapping.py` | 對照表（記憶體、雙向、自己發號碼） |
+| `cache.py` | 偵測結果快取（LRU，key 為 SHA-256 指紋） |
 | `config.py` | 環境變數（金鑰一律走 `os.getenv()`，不寫進 log） |
+
+## 效能
+
+| 項目 | 數值 |
+|---|---|
+| 遮蔽（2761 字元、含 40 筆個資） | 2〜4 ms |
+| proxy 總額外成本 | 約 5 ms |
+| 上游 LLM 本身 | 1400〜2900 ms |
+| **占比** | **約 0.25%** |
+
+以上是**只跑規則層**的數字，`PII_ENABLE_NER` 關閉時就是這張表。語意層已經
+接上（見上一節），但預設關閉；D 修好 512 token 截斷問題後重新實測 CPU、
+2800 字元單次推論 **median 2443 ms**（占上游往返約 84〜175%，比上游本身
+還慢），這也是為什麼語意層做成可開關、預設關閉是對的決定。規則層永遠開
+—— 台灣身分證／統編有 checksum，既快又是確定性的偵測，那才是本專題的核心。
+
+### 偵測快取
+
+agent 每次請求都重送整段對話歷史，同一份檔案內容會被重複掃十幾次。
+模擬 8 輪對話（共 36 個欄位、其中只有 8 個是新的）：
+
+| 情境 | 無快取 | 有快取 | 省下 |
+|---|---|---|---|
+| 純規則層 | 59.9 ms | 18.0 ms | **70%** |
+| 假設 Layer 2 每次推論 200 ms | 7261 ms | 1619 ms | **78%** |
+
+命中率隨對話變長而上升（8 輪時為 78%）。
+`/healthz` 會回報即時的命中率與快取筆數。

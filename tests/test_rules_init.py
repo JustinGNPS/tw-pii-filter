@@ -134,6 +134,32 @@ class DetectAllTests(unittest.TestCase):
         for i in range(len(spans) - 1):
             self.assertLessEqual(spans[i]["end"], spans[i + 1]["start"])
 
+    def test_layer4_renumbers_replacements_after_removing_a_conflicting_span(self):
+        # 「A123456789」在獨立呼叫 detect_tw_id 時會編號 TW_ID_1，
+        # 「B200000004」會編號 TW_ID_2；但 A123456789 其實是前面 email 的
+        # local-part，仲裁後會被 EMAIL 蓋過而移除，只剩 B200000004 這個 TW_ID。
+        # 若不重新編號，B200000004 會停留在過時的 [TW_ID_2]（沒有 TW_ID_1），
+        # 出現跳號；detect_all 應該把它重新編為 [TW_ID_1]。
+        text = "A123456789@example.com 另外 B200000004"
+
+        raw_tw_id_spans = rules.detect_tw_id(text)["spans"]
+        self.assertEqual(
+            [s["replacement"] for s in raw_tw_id_spans],
+            ["[TW_ID_1]", "[TW_ID_2]"],
+        )
+
+        result = detect_all(text)
+
+        tw_id_spans = [s for s in result["spans"] if s["type"] == "TW_ID"]
+        email_spans = [s for s in result["spans"] if s["type"] == "EMAIL"]
+
+        self.assertEqual(len(tw_id_spans), 1)
+        self.assertEqual(text[tw_id_spans[0]["start"]:tw_id_spans[0]["end"]], "B200000004")
+        self.assertEqual(tw_id_spans[0]["replacement"], "[TW_ID_1]")
+
+        self.assertEqual(len(email_spans), 1)
+        self.assertEqual(email_spans[0]["replacement"], "[EMAIL_1]")
+
     def test_no_match_in_plain_text(self):
         text = "這段文字沒有任何個資。"
         result = detect_all(text)
@@ -150,6 +176,70 @@ class DetectAllTests(unittest.TestCase):
                 set(span.keys()),
                 {"start", "end", "type", "text", "confidence", "source", "replacement"},
             )
+
+
+class DetectAllExtraSpansIntegrationTests(unittest.TestCase):
+    """detect_all(text, extra_spans=...) 整合語意層（source="model"）spans 的行為測試。"""
+
+    def _model_span(self, start, end, text, type_="PERSON_NAME", confidence=0.8):
+        return {
+            "start": start,
+            "end": end,
+            "type": type_,
+            "text": text,
+            "confidence": confidence,
+            "source": "model",
+            "replacement": f"[{type_}_1]",
+        }
+
+    def test_non_conflicting_model_span_is_merged_in(self):
+        text = "王小明 身分證 A123456789"
+        model_span = self._model_span(0, 3, "王小明")
+
+        result = detect_all(text, extra_spans=[model_span])
+
+        types_found = {span["type"] for span in result["spans"]}
+        self.assertEqual(types_found, {"PERSON_NAME", "TW_ID"})
+
+        starts = [span["start"] for span in result["spans"]]
+        self.assertEqual(starts, sorted(starts))
+
+    def test_rule_wins_over_model_when_range_and_confidence_tie(self):
+        # 語意層與規則層對同一段文字判斷出完全相同的範圍與 confidence，
+        # 依仲裁順序第三條，rule 應該勝出。
+        text = "身分證 A123456789"
+        rule_span = rules.detect_tw_id(text)["spans"][0]
+        model_span = self._model_span(
+            rule_span["start"], rule_span["end"], rule_span["text"],
+            type_="TW_ID", confidence=rule_span["confidence"],
+        )
+
+        result = detect_all(text, extra_spans=[model_span])
+
+        self.assertEqual(len(result["spans"]), 1)
+        self.assertEqual(result["spans"][0]["source"], "rule")
+
+    def test_larger_model_span_wins_over_smaller_rule_span(self):
+        # 範圍大者優先於 source 優先權：即使是 model 來源，
+        # 只要範圍比 rule span 大，仍然勝出。
+        text = "身分證 A123456789"
+        rule_span = rules.detect_tw_id(text)["spans"][0]
+        larger_model_span = self._model_span(
+            rule_span["start"] - 4, rule_span["end"], "身分證 A123456789",
+            type_="SENSITIVE_BLOCK", confidence=0.5,
+        )
+
+        result = detect_all(text, extra_spans=[larger_model_span])
+
+        self.assertEqual(len(result["spans"]), 1)
+        self.assertEqual(result["spans"][0]["type"], "SENSITIVE_BLOCK")
+        self.assertEqual(result["spans"][0]["source"], "model")
+
+    def test_extra_spans_defaults_to_none_without_error(self):
+        text = "身分證 A123456789"
+        result = detect_all(text)
+
+        self.assertEqual(len(result["spans"]), 1)
 
 
 if __name__ == "__main__":
