@@ -51,15 +51,38 @@ def _sse_texts(response) -> str:
     return text
 
 
+def _openai_sse_response(
+    text: str | None = None, tool_calls: list[dict] | None = None
+) -> httpx.Response:
+    """組一個假的 OpenAI 格式 SSE 回覆，模擬 AIR 用 `stream: true` 呼叫時
+    真正會回的樣子——Claude Code 一律 `stream: true`，第 6 步之後 proxy
+    對上游也一律用串流呼叫，respx 的假回覆要跟著改成 SSE 才符合實際路徑。
+    """
+    events = []
+    if text is not None:
+        events.append({"delta": {"role": "assistant", "content": text}})
+    if tool_calls is not None:
+        events.append({"delta": {"role": "assistant", "tool_calls": tool_calls}})
+    finish_reason = "tool_calls" if tool_calls is not None else "stop"
+    events.append({"delta": {}, "finish_reason": finish_reason})
+
+    body = "".join(
+        f"data: {json.dumps({'choices': [{'index': 0, **event}]}, ensure_ascii=False)}\n\n"
+        for event in events
+    )
+    body += "data: [DONE]\n\n"
+    return httpx.Response(
+        200, headers={"content-type": "text/event-stream"}, content=body.encode("utf-8")
+    )
+
+
 # ---------------------------------------------------------- 遮蔽：送給上游的是佔位符
 
 
 @respx.mock
 def test_上游收到翻譯過的_openai格式_且個資已遮蔽(client):
     route = respx.post(f"{UPSTREAM}/chat/completions").mock(
-        return_value=httpx.Response(
-            200, json={"choices": [{"message": {"content": "收到"}}]}
-        )
+        return_value=_openai_sse_response(text="收到")
     )
 
     response = client.post(
@@ -69,7 +92,7 @@ def test_上游收到翻譯過的_openai格式_且個資已遮蔽(client):
     assert response.status_code == 200
     sent = json.loads(route.calls.last.request.content)
     assert sent["model"] == "gpt-4.1-mini"  # 不是 Claude Code 宣告的 claude-sonnet-5
-    assert sent["stream"] is False
+    assert sent["stream"] is True  # Claude Code 一律 stream:true，proxy 對上游也是
     sent_text = json.dumps(sent, ensure_ascii=False)
     assert "A123456789" not in sent_text
     assert "[TW_ID_1]" in sent_text
@@ -79,7 +102,7 @@ def test_上游收到翻譯過的_openai格式_且個資已遮蔽(client):
 def test_system陣列裡的個資也會被遮蔽(client):
     """真實擷取到的案例：Claude Code 的 system-reminder 裡會夾帶使用者 email。"""
     route = respx.post(f"{UPSTREAM}/chat/completions").mock(
-        return_value=httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
+        return_value=_openai_sse_response(text="ok")
     )
 
     client.post(
@@ -103,10 +126,7 @@ def test_system陣列裡的個資也會被遮蔽(client):
 @respx.mock
 def test_上游回覆的佔位符會被還原並包成anthropic_sse(client):
     respx.post(f"{UPSTREAM}/chat/completions").mock(
-        return_value=httpx.Response(
-            200,
-            json={"choices": [{"message": {"content": "你的 [TW_ID_1] 已收到"}}]},
-        )
+        return_value=_openai_sse_response(text="你的 [TW_ID_1] 已收到")
     )
 
     response = client.post(
@@ -120,9 +140,7 @@ def test_上游回覆的佔位符會被還原並包成anthropic_sse(client):
 
 @respx.mock
 def test_回覆事件序列符合anthropic格式(client):
-    respx.post(f"{UPSTREAM}/chat/completions").mock(
-        return_value=httpx.Response(200, json={"choices": [{"message": {"content": "hi"}}]})
-    )
+    respx.post(f"{UPSTREAM}/chat/completions").mock(return_value=_openai_sse_response(text="hi"))
 
     response = client.post("/v1/messages", json=_anthropic_payload("hi"))
 
@@ -150,7 +168,7 @@ def test_歷史裡的tool_use真值會被重新遮蔽才送出上游(client):
     重送歷史時，這則訊息會再度出現在 payload 裡，proxy 必須重新遮蔽，
     不能直接轉送（見 anthropic_adapter 模組 docstring 的說明）。"""
     route = respx.post(f"{UPSTREAM}/chat/completions").mock(
-        return_value=httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
+        return_value=_openai_sse_response(text="ok")
     )
 
     payload = _anthropic_payload("繼續")
@@ -181,7 +199,7 @@ def test_tool_result裡的個資會被遮蔽才送出上游(client):
     """真實案例：Read 工具讀到的檔案內容可能含有真實個資（見
     docs/B_progress.md 08-11 那筆擷取記錄，customer_export.py 裡的假資料）。"""
     route = respx.post(f"{UPSTREAM}/chat/completions").mock(
-        return_value=httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
+        return_value=_openai_sse_response(text="ok")
     )
 
     payload = _anthropic_payload("繼續")
@@ -210,7 +228,7 @@ def test_tool_result裡的個資會被遮蔽才送出上游(client):
 def test_tools欄位會被翻譯後送給上游(client):
     with respx.mock:
         route = respx.post(f"{UPSTREAM}/chat/completions").mock(
-            return_value=httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
+            return_value=_openai_sse_response(text="ok")
         )
         client.post("/v1/messages", json=_anthropic_payload("hi"))
 
@@ -225,26 +243,14 @@ def test_tools欄位會被翻譯後送給上游(client):
 @respx.mock
 def test_上游決定呼叫工具時回覆會被包成tool_use_block(client):
     respx.post(f"{UPSTREAM}/chat/completions").mock(
-        return_value=httpx.Response(
-            200,
-            json={
-                "choices": [
-                    {
-                        "message": {
-                            "content": None,
-                            "tool_calls": [
-                                {
-                                    "id": "call_1",
-                                    "function": {
-                                        "name": "Read",
-                                        "arguments": '{"file_path": "a.py"}',
-                                    },
-                                }
-                            ],
-                        }
-                    }
-                ]
-            },
+        return_value=_openai_sse_response(
+            tool_calls=[
+                {
+                    "index": 0,
+                    "id": "call_1",
+                    "function": {"name": "Read", "arguments": '{"file_path": "a.py"}'},
+                }
+            ]
         )
     )
 
@@ -269,29 +275,20 @@ def test_tool_calls參數裡的佔位符會被還原成真值(client):
     還原邏輯沿用既有的 restorer.restore_body()，這裡驗證它對這條新路徑也有效。"""
     respx.post(f"{UPSTREAM}/chat/completions").mock(
         side_effect=[
-            httpx.Response(200, json={"choices": [{"message": {"content": "收到"}}]}),
-            httpx.Response(
-                200,
-                json={
-                    "choices": [
-                        {
-                            "message": {
-                                "content": None,
-                                "tool_calls": [
-                                    {
-                                        "id": "call_1",
-                                        "function": {
-                                            "name": "Edit",
-                                            "arguments": json.dumps(
-                                                {"old_string": "[TW_ID_1]", "new_string": "x"}
-                                            ),
-                                        },
-                                    }
-                                ],
-                            }
-                        }
-                    ]
-                },
+            _openai_sse_response(text="收到"),
+            _openai_sse_response(
+                tool_calls=[
+                    {
+                        "index": 0,
+                        "id": "call_1",
+                        "function": {
+                            "name": "Edit",
+                            "arguments": json.dumps(
+                                {"old_string": "[TW_ID_1]", "new_string": "x"}
+                            ),
+                        },
+                    }
+                ]
             ),
         ]
     )

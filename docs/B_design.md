@@ -338,7 +338,7 @@ D 修好 512 token 截斷問題後重新實測 **recall 97.6%**，比修之前�
 | Continue | `~/.continue/config.yaml` 自訂 `provider: openai` + `apiBase` | function calling | **已實測通過**（再次驗證 tool_calls 還原修復不是只對 OpenCode 有效） |
 | Cline | GUI 設定選 **OpenAI Compatible**，填 Base URL/API Key/Model | function calling | **已實測通過**（第三款驗證同一個修復） |
 | Codex | 設定檔自訂 provider | 待確認 | 協定略有差異，`detector.py` 可能需擴充；測之前先確認走的是 `tool_calls` 還是別的欄位結構 |
-| Claude Code | `ANTHROPIC_BASE_URL` | Anthropic Messages API（欄位結構完全不同） | Anthropic 格式，`extract_texts()` 需擴充才能用，目前**攔不到**，不是測試問題 |
+| Claude Code | `ANTHROPIC_BASE_URL` | Anthropic Messages API（欄位結構完全不同，另有協定翻譯層） | **已實測通過**（純文字對話 + 工具呼叫，含真串流；圖片/文件附件尚未支援，見下） |
 | **Cursor** | — | 廠商代管後端，無自訂位址欄位 | **不支援**（見上「BYOK vs. 代管帳號」） |
 
 「編輯機制」這一欄是 OpenCode 測試後才加的——它正是還原邏輯要走哪條
@@ -375,6 +375,50 @@ Aider 壞掉是同一類問題，只是這次是靜默發生，連錯誤訊息�
 **編輯機制本身（純文字 vs. function calling）會影響還原這一側走的是哪條
 程式碼路徑**。後續測 Continue / Cline / Codex / Claude Code 時，這是
 優先要確認的事——它們是走文字回覆還是工具呼叫。
+
+### Claude Code：多一層協定翻譯，而不是多一份遮蔽/還原邏輯
+
+Claude Code 走的是 Anthropic Messages API（`POST /v1/messages`），跟其他
+五款 agent 共用的 OpenAI 相容格式（`/v1/chat/completions`）完全不同——
+不是欄位少幾個的問題，是端點、訊息結構、串流事件格式整個不一樣。而且
+**AIR 上游根本不支援 Anthropic 格式**（實測直接回 404
+`unsupported_endpoint`），所以這條路徑不能只做「挖文字」，還得整包
+**協定轉換**：Anthropic 請求 → OpenAI 相容格式 → 真的送給 AIR → 換回來。
+
+**決定：轉換層之外，遮蔽/還原完全沿用既有機制，不重寫一套。**
+
+- Anthropic 的 `messages[].content`／`system` 文字 block 形狀
+  （`{"type": "text", "text": "..."}`）跟 OpenAI 多模態 content parts
+  重疊，`detector.extract_texts()` 稍微擴充（新增掃 `system` 欄位、
+  `tool_use.input` 任意深度巢狀 JSON 裡的字串葉節點、`tool_result.content`）
+  就能直接吃 Anthropic 格式的 payload，`masker.mask_payload()` 完全不用改
+- 還原沿用 `restorer.restore_body()`（非串流）與 `restorer.SSERestorer`
+  （串流），在 AIR 回覆的原始 JSON／SSE 位元組上做文字取代——這兩個都是
+  對 OpenAI 格式寫的，但因為還原是在**序列化後的原始位元組**上做正則
+  取代，跟外層是什麼協定無關，天然可以重用
+
+新寫的只有 `proxy/anthropic_adapter.py` 這一個模組，純粹負責格式互轉：
+`to_openai_request()`（Anthropic → OpenAI，含 `tool_use`/`tool_result`/
+`tools[]` 的轉換）、`response_to_event_stream()`（非串流回覆包成 Anthropic
+SSE，簡化版）、`AnthropicStreamTranslator`（真串流版，邊收 AIR 的 OpenAI
+格式 delta 邊即時翻譯成 Anthropic 事件）。目前還不支援圖片／文件附件
+（`image`/`document` block），遇到會回 501 誠實拒絕，不硬翻。
+
+**為什麼 `tool_use.input` 一定要重新掃**：assistant 的 `tool_use` block
+一旦被 proxy 還原、送回 Claude Code，裡面就是真值。Claude Code 每次請求
+都重送整段對話歷史，下一輪這則歷史訊息會帶著真值再出現，若不重新遮蔽
+就直接轉送給 AIR，真值等於外洩——跟上面 OpenCode 那個洞是同一類問題
+（工具呼叫路徑容易被忽略），只是方向相反：那次是「還原沒做，佔位符
+外洩給使用者」，這次若疏漏會是「真值外洩給雲端 AI」。已用真實請求
+驗證過這條路徑正確運作。
+
+**踩到一個只有真實環境才會浮現的坑**：官方 OpenAI 規格允許 assistant
+訊息只有 `tool_calls`、沒有文字時 `content` 是 `null`，但 AIR 的驗證比
+規格嚴格，會直接拒絕（400）。改成沒有文字時給空字串 `""`。這種「規格
+允許但特定供應商不接受」的落差，光看規格文件或用 mock 測試量不出來——
+mock 只會回你安排好的回覆，不會告訴你「你送出去的請求，上游願不願意
+收」，這個 bug 是真的打 AIR 才浮現的，也是後續加新 agent／新上游時要
+記得的教訓：協定翻譯層寫完一定要跑一次真實環境。
 
 ---
 

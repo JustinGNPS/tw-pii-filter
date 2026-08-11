@@ -511,3 +511,164 @@ def test_extract_reply_text_格式不對時回傳空字串():
     assert anthropic_adapter.extract_reply_text({}) == ""
     assert anthropic_adapter.extract_reply_text({"choices": []}) == ""
     assert anthropic_adapter.extract_reply_text({"choices": [{}]}) == ""
+
+
+# ---------------------------------------------------------- AnthropicStreamTranslator（第 6 步：真串流）
+
+
+def _openai_delta_event(delta: dict, finish_reason: str | None = None) -> str:
+    obj = {"choices": [{"index": 0, "delta": delta, "finish_reason": finish_reason}]}
+    return "data: " + json.dumps(obj, ensure_ascii=False) + "\n\n"
+
+
+def _openai_stream(deltas: list[dict], finish_reason: str = "stop") -> bytes:
+    """組一段假的 OpenAI 格式 SSE 位元組流，模擬 AIR 用 stream: true 回覆。"""
+    body = "".join(_openai_delta_event(d) for d in deltas)
+    body += _openai_delta_event({}, finish_reason=finish_reason)
+    body += "data: [DONE]\n\n"
+    return body.encode("utf-8")
+
+
+def _translate(
+    raw: bytes, chunk_size: int, model: str = "claude-sonnet-5", message_id: str = "msg_1"
+) -> list[dict]:
+    """模擬 proxy 逐段餵位元組進翻譯器，回傳 Claude Code 端會收到的事件陣列。"""
+    translator = anthropic_adapter.AnthropicStreamTranslator(model=model, message_id=message_id)
+    out = b""
+    for i in range(0, len(raw), chunk_size):
+        out += translator.feed(raw[i : i + chunk_size])
+    out += translator.flush()
+    return _parse_sse_events(out.decode("utf-8"))
+
+
+def _delta_texts(events: list[dict]) -> str:
+    return "".join(
+        e["delta"]["text"] for e in events if e["type"] == "content_block_delta" and "text" in e["delta"]
+    )
+
+
+def test_純文字回覆會被翻譯成text_delta事件():
+    raw = _openai_stream([{"content": "你"}, {"content": "好"}])
+    events = _translate(raw, chunk_size=4096)
+
+    types = [e["type"] for e in events]
+    assert types == [
+        "message_start",
+        "content_block_start",
+        "content_block_delta",
+        "content_block_delta",
+        "content_block_stop",
+        "message_delta",
+        "message_stop",
+    ]
+    assert _delta_texts(events) == "你好"
+
+
+def test_不管位元組怎麼切結果都一樣():
+    raw = _openai_stream(
+        [{"content": "客戶身分證 "}, {"content": "A123456789"}, {"content": " 已收到"}]
+    )
+    expected = "客戶身分證 A123456789 已收到"
+
+    for size in (1, 2, 3, 7, 16, 64, 4096):
+        events = _translate(raw, chunk_size=size)
+        assert _delta_texts(events) == expected, f"切成 {size} 位元組時不一致"
+
+
+def test_工具呼叫的id與name只在第一個delta出現():
+    raw = _openai_stream(
+        [
+            {"tool_calls": [{"index": 0, "id": "call_1", "function": {"name": "Read", "arguments": ""}}]},
+            {"tool_calls": [{"index": 0, "function": {"arguments": '{"file_path"'}}]},
+            {"tool_calls": [{"index": 0, "function": {"arguments": ': "a.py"}'}}]},
+        ],
+        finish_reason="tool_calls",
+    )
+    events = _translate(raw, chunk_size=4096)
+
+    start = next(e for e in events if e["type"] == "content_block_start")
+    assert start["content_block"]["id"] == "call_1"
+    assert start["content_block"]["name"] == "Read"
+
+    partial_json = "".join(
+        e["delta"]["partial_json"] for e in events if e["type"] == "content_block_delta"
+    )
+    assert json.loads(partial_json) == {"file_path": "a.py"}
+
+    message_delta = next(e for e in events if e["type"] == "message_delta")
+    assert message_delta["delta"]["stop_reason"] == "tool_use"
+
+
+def test_多個平行工具呼叫不會互相插斷():
+    raw = _openai_stream(
+        [
+            {"tool_calls": [{"index": 0, "id": "call_a", "function": {"name": "Read", "arguments": ""}}]},
+            {"tool_calls": [{"index": 1, "id": "call_b", "function": {"name": "Read", "arguments": ""}}]},
+            {"tool_calls": [{"index": 0, "function": {"arguments": "{}"}}]},
+            {"tool_calls": [{"index": 1, "function": {"arguments": "{}"}}]},
+        ],
+        finish_reason="tool_calls",
+    )
+    events = _translate(raw, chunk_size=4096)
+
+    starts = [e for e in events if e["type"] == "content_block_start"]
+    assert [s["content_block"]["id"] for s in starts] == ["call_a", "call_b"]
+    assert [s["index"] for s in starts] == [0, 1]
+
+    deltas = [e for e in events if e["type"] == "content_block_delta"]
+    assert [d["index"] for d in deltas] == [0, 1]
+
+
+def test_文字後面接著工具呼叫時文字block會先收尾():
+    raw = _openai_stream(
+        [
+            {"content": "我先讀一下"},
+            {"tool_calls": [{"index": 0, "id": "call_1", "function": {"name": "Read", "arguments": "{}"}}]},
+        ],
+        finish_reason="tool_calls",
+    )
+    events = _translate(raw, chunk_size=4096)
+
+    stops = [e for e in events if e["type"] == "content_block_stop"]
+    starts = [e for e in events if e["type"] == "content_block_start"]
+    assert [s["index"] for s in starts] == [0, 1]
+    assert starts[0]["content_block"]["type"] == "text"
+    assert starts[1]["content_block"]["type"] == "tool_use"
+    # 文字 block（index 0）必須在工具呼叫 block（index 1）開始前就先收尾
+    assert stops[0]["index"] == 0
+
+
+def test_finish_reason轉換成正確的stop_reason():
+    cases = {"stop": "end_turn", "tool_calls": "tool_use", "length": "max_tokens"}
+    for finish_reason, expected in cases.items():
+        raw = _openai_stream([{"content": "hi"}], finish_reason=finish_reason)
+        events = _translate(raw, chunk_size=4096)
+        message_delta = next(e for e in events if e["type"] == "message_delta")
+        assert message_delta["delta"]["stop_reason"] == expected, finish_reason
+
+
+def test_沒有finish_reason時flush會補上收尾事件():
+    """上游若因為某種原因沒送 finish_reason 就斷線，flush() 要保證還是有
+    合法的 message_delta/message_stop，不能讓 Claude Code 收到沒收尾的串流。"""
+    translator = anthropic_adapter.AnthropicStreamTranslator(model="claude-sonnet-5", message_id="msg_1")
+    out = translator.feed(_openai_delta_event({"content": "hi"}).encode("utf-8"))
+    out += translator.flush()
+
+    events = _parse_sse_events(out.decode("utf-8"))
+    assert events[-1]["type"] == "message_stop"
+    assert events[-2]["type"] == "message_delta"
+
+
+def test_完全空的回覆也有合法的最小事件序列():
+    translator = anthropic_adapter.AnthropicStreamTranslator(model="claude-sonnet-5", message_id="msg_1")
+    out = translator.flush()
+
+    events = _parse_sse_events(out.decode("utf-8"))
+    assert [e["type"] for e in events] == ["message_start", "message_delta", "message_stop"]
+
+
+def test_DONE標記會觸發收尾即使沒有明確的finish_reason():
+    raw = b'data: {"choices":[{"index":0,"delta":{"content":"hi"}}]}\n\ndata: [DONE]\n\n'
+    events = _translate(raw, chunk_size=4096)
+    assert events[-1]["type"] == "message_stop"
+    assert _delta_texts(events) == "hi"

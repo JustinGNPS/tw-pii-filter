@@ -27,6 +27,7 @@ OpenCode 曾經因為這條路徑沒被處理而把佔位符寫進使用者檔�
 的風險：真值沒被重新遮蔽而送出去）。
 """
 
+import codecs
 import json
 from typing import Any
 
@@ -369,3 +370,225 @@ def text_event_stream(text: str, model: str, message_id: str) -> str:
     return response_to_event_stream(
         {"choices": [{"message": {"content": text}}]}, model=model, message_id=message_id
     )
+
+
+# ---------------------------------------------------------------------------
+# 第 6 步：真串流。上面的 `response_to_event_stream()` 是簡化版——等 AIR
+# 非串流回完整結果，再一次包成單一事件送出，功能正確但沒有逐字出現的
+# 打字機效果。這裡改成 AIR 也用 `stream: true` 呼叫，邊收 OpenAI 格式的
+# SSE delta，邊即時翻譯成 Anthropic 格式的 SSE 事件往外送。
+# ---------------------------------------------------------------------------
+
+# OpenAI 的 finish_reason -> Anthropic 的 stop_reason。沒對應到的一律當
+# end_turn（寧可保守，不要讓 Claude Code 收到它不認得的值）。
+_ANTHROPIC_STOP_REASONS = {
+    "stop": "end_turn",
+    "tool_calls": "tool_use",
+    "length": "max_tokens",
+    "content_filter": "end_turn",
+}
+
+
+class AnthropicStreamTranslator:
+    """把 AIR 的 OpenAI 格式 SSE 串流，即時翻譯成 Anthropic 格式的串流事件。
+
+    用法跟 `restorer.SSERestorer` 一致：AIR 回來的 SSE 位元組逐段餵進
+    `feed()`，最後呼叫 `flush()` 收尾；一個回覆用一個新實例，內部有狀態
+    （目前開著哪個 content block、每個工具呼叫的 index 對到哪個 Anthropic
+    block index）不能跨回覆共用。
+
+    餵進來的位元組應該已經先經過 `restorer.SSERestorer` 還原過佔位符——
+    這個類別只負責格式翻譯，不做任何字串取代，兩件事刻意分開（第 5 步
+    「驗證非串流還原不用改」延伸到真串流：還原邏輯完全沿用既有的
+    `SSERestorer`，這裡只是它的下一棒）。
+    """
+
+    _EVENT_SEPARATOR = "\n\n"
+    _DATA_PREFIX = "data: "
+    _DONE = "[DONE]"
+
+    def __init__(self, model: str, message_id: str) -> None:
+        self._model = model
+        self._message_id = message_id
+        self._decoder = codecs.getincrementaldecoder("utf-8")()
+        self._pending = ""
+        self._started = False
+        self._finished = False
+        self._next_index = 0
+        self._text_index: int | None = None
+        # OpenAI 的 tool_calls[].index（同一個工具呼叫跨多個 delta 事件的
+        # 關聯鍵）-> 這個工具呼叫分配到的 Anthropic content_block index。
+        # 一次回覆可能同時串流多個工具呼叫，不能共用一個 index。
+        self._tool_block_index: dict[int, int] = {}
+
+    def feed(self, chunk: bytes) -> bytes:
+        self._pending += self._decoder.decode(chunk)
+        blocks = self._pending.split(self._EVENT_SEPARATOR)
+        self._pending = blocks.pop()
+        return "".join(self._process_block(block) for block in blocks).encode("utf-8")
+
+    def flush(self) -> bytes:
+        """串流結束時收尾：處理殘留的最後一個事件區塊，並確保
+        `message_delta`/`message_stop` 一定有送出（上游若忘了帶
+        `finish_reason` 就送到這裡才補），不留下沒收尾的串流。
+        """
+        out = ""
+        if self._pending:
+            out += self._process_block(self._pending)
+            self._pending = ""
+        if not self._finished:
+            out += self._finish("stop")
+        return out.encode("utf-8")
+
+    def _process_block(self, block: str) -> str:
+        out = ""
+        for line in block.split("\n"):
+            if not line.startswith(self._DATA_PREFIX):
+                continue
+            data = line[len(self._DATA_PREFIX) :]
+            if data.strip() == self._DONE:
+                if not self._finished:
+                    out += self._finish("stop")
+                continue
+            try:
+                obj = json.loads(data)
+            except (ValueError, TypeError):
+                continue  # 不是 JSON 就跳過，不能讓格式怪異的事件打斷整個串流
+            out += self._handle_event(obj)
+        return out
+
+    def _ensure_started(self) -> str:
+        if self._started:
+            return ""
+        self._started = True
+        return _sse_event(
+            "message_start",
+            {
+                "type": "message_start",
+                "message": {
+                    "id": self._message_id,
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [],
+                    "model": self._model,
+                    "stop_reason": None,
+                    "stop_sequence": None,
+                    "usage": {"input_tokens": 1, "output_tokens": 1},
+                },
+            },
+        )
+
+    def _handle_event(self, obj: dict) -> str:
+        out = self._ensure_started()
+        choices = obj.get("choices")
+        if not isinstance(choices, list) or not choices:
+            return out
+        choice = choices[0]
+        if not isinstance(choice, dict):
+            return out
+        delta = choice.get("delta") or {}
+
+        if isinstance(delta.get("content"), str) and delta["content"]:
+            out += self._emit_text(delta["content"])
+
+        tool_calls = delta.get("tool_calls")
+        if isinstance(tool_calls, list):
+            for call in tool_calls:
+                if isinstance(call, dict):
+                    out += self._emit_tool_call_delta(call)
+
+        finish_reason = choice.get("finish_reason")
+        if finish_reason and not self._finished:
+            out += self._finish(finish_reason)
+
+        return out
+
+    def _close_text_if_open(self) -> str:
+        if self._text_index is None:
+            return ""
+        index = self._text_index
+        self._text_index = None
+        return _sse_event("content_block_stop", {"type": "content_block_stop", "index": index})
+
+    def _emit_text(self, text: str) -> str:
+        out = ""
+        if self._text_index is None:
+            self._text_index = self._next_index
+            self._next_index += 1
+            out += _sse_event(
+                "content_block_start",
+                {
+                    "type": "content_block_start",
+                    "index": self._text_index,
+                    "content_block": {"type": "text", "text": ""},
+                },
+            )
+        out += _sse_event(
+            "content_block_delta",
+            {
+                "type": "content_block_delta",
+                "index": self._text_index,
+                "delta": {"type": "text_delta", "text": text},
+            },
+        )
+        return out
+
+    def _emit_tool_call_delta(self, call: dict) -> str:
+        call_index = call.get("index")
+        if not isinstance(call_index, int):
+            return ""  # 沒有 index 就沒辦法跟後續的 delta 關聯在一起，跳過
+
+        out = ""
+        if call_index not in self._tool_block_index:
+            # 新的工具呼叫開始：文字（如果有）先收尾，換工具呼叫 block 上場
+            out += self._close_text_if_open()
+            block_index = self._next_index
+            self._next_index += 1
+            self._tool_block_index[call_index] = block_index
+            call_id = call.get("id") or f"toolu_{self._message_id}_{call_index}"
+            name = (call.get("function") or {}).get("name", "")
+            out += _sse_event(
+                "content_block_start",
+                {
+                    "type": "content_block_start",
+                    "index": block_index,
+                    "content_block": {
+                        "type": "tool_use",
+                        "id": call_id,
+                        "name": name,
+                        "input": {},
+                    },
+                },
+            )
+
+        arguments = (call.get("function") or {}).get("arguments")
+        if isinstance(arguments, str) and arguments:
+            out += _sse_event(
+                "content_block_delta",
+                {
+                    "type": "content_block_delta",
+                    "index": self._tool_block_index[call_index],
+                    "delta": {"type": "input_json_delta", "partial_json": arguments},
+                },
+            )
+        return out
+
+    def _finish(self, finish_reason: str) -> str:
+        out = self._ensure_started()  # 完全沒內容的回覆也要有合法的開頭
+        out += self._close_text_if_open()
+        for block_index in self._tool_block_index.values():
+            out += _sse_event(
+                "content_block_stop", {"type": "content_block_stop", "index": block_index}
+            )
+        stop_reason = _ANTHROPIC_STOP_REASONS.get(finish_reason, "end_turn")
+        out += _sse_event(
+            "message_delta",
+            {
+                "type": "message_delta",
+                "delta": {"stop_reason": stop_reason, "stop_sequence": None},
+                "usage": {"output_tokens": 5},
+            },
+        )
+        out += _sse_event("message_stop", {"type": "message_stop"})
+        self._finished = True
+        return out

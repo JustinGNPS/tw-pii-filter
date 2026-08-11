@@ -182,6 +182,19 @@ def test_沒有_v1_前綴的路徑也接得住(client):
     assert route.called
 
 
+@respx.mock
+def test_HEAD請求也接得住(client):
+    """Claude Code CLI 啟動時會用 HEAD 做連線探測（實測 HEAD /api/hello），
+    catch-all 原本只接 GET/POST/PUT/PATCH/DELETE，漏了 HEAD 會白白回
+    405，即使不影響後續請求也不該讓這種探測性請求平白出錯。"""
+    route = respx.head(f"{UPSTREAM}/api/hello").mock(return_value=httpx.Response(200))
+
+    response = client.request("HEAD", "/api/hello")
+
+    assert response.status_code == 200
+    assert route.called
+
+
 # ---------------------------------------------------------------- SSE 串流
 
 

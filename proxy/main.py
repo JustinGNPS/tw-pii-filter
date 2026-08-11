@@ -201,7 +201,7 @@ async def _proxy(path: str, request: Request) -> Response:
     )
 
 
-_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE"]
+_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"]
 
 
 # ---------------------------------------------------------------------------
@@ -273,7 +273,14 @@ async def _proxy_anthropic(request: Request) -> Response:
     started = time.perf_counter()
     payload, detect_ms = await asyncio.to_thread(_mask_anthropic_payload, payload, table)
 
+    model = payload.get("model") or config.DEFAULT_MODEL
+    message_id = f"msg_{uuid.uuid4().hex[:24]}"
+    # Claude Code 一律送 stream: true；stream 欄位預設當 true 處理，
+    # 保留 False 分支是為了不排除其他可能不用串流的呼叫端。
+    wants_stream = payload.get("stream", True) is not False
+
     openai_request = anthropic_adapter.to_openai_request(payload, model=config.DEFAULT_MODEL)
+    openai_request["stream"] = wants_stream
     openai_body = json.dumps(openai_request, ensure_ascii=False).encode("utf-8")
 
     upstream = await forward.open_upstream(
@@ -284,6 +291,23 @@ async def _proxy_anthropic(request: Request) -> Response:
         {"content-type": "application/json"},
         openai_body,
     )
+
+    if wants_stream:
+        return await _relay_anthropic_stream(
+            upstream, table, started, detect_ms, model, message_id
+        )
+    return await _relay_anthropic_once(upstream, table, started, detect_ms, model, message_id)
+
+
+async def _relay_anthropic_once(
+    upstream, table: MappingTable, started: float, detect_ms: float, model: str, message_id: str
+) -> Response:
+    """非串流路徑：等 AIR 回完整結果，還原後一次包成單一 SSE 事件送出。
+
+    第 3/4 步當時的做法，保留給 `stream: false` 的請求（Claude Code 實際上
+    不會這樣送，但不排除其他呼叫端）。真正被 Claude Code 用到的是
+    `_relay_anthropic_stream()`（第 6 步：真串流）。
+    """
     content = await upstream.aread()
     await upstream.aclose()
 
@@ -317,13 +341,64 @@ async def _proxy_anthropic(request: Request) -> Response:
         f"（{unknown} 筆查無對照）" if unknown else "",
     )
 
-    message_id = f"msg_{uuid.uuid4().hex[:24]}"
     sse = anthropic_adapter.response_to_event_stream(
-        openai_response,
-        model=payload.get("model") or config.DEFAULT_MODEL,
-        message_id=message_id,
+        openai_response, model=model, message_id=message_id
     )
     return StreamingResponse(iter([sse]), media_type="text/event-stream")
+
+
+async def _relay_anthropic_stream(
+    upstream, table: MappingTable, started: float, detect_ms: float, model: str, message_id: str
+) -> Response:
+    """第 6 步：真串流。AIR 也用 `stream: true` 呼叫，邊收 OpenAI 格式的
+    SSE delta，邊即時翻譯成 Anthropic 格式的事件往外送，不用等完整回覆。
+
+    還原沿用既有的 `restorer.SSERestorer`（第 5 步已驗證過的機制，這裡是
+    它第一次真的被 Claude Code 這條路徑使用，先前第 3/4 步走的是非串流的
+    `restore_body()`）；格式翻譯交給新寫的 `AnthropicStreamTranslator`
+    （`proxy/anthropic_adapter.py`），兩者刻意分開、各司其職。
+    """
+    if upstream.status_code >= 400:
+        content = await upstream.aread()
+        await upstream.aclose()
+        logger.error(
+            "Claude Code 轉換後的請求被上游拒絕：%d %s",
+            upstream.status_code,
+            content[:200],
+        )
+        return _anthropic_error(
+            502, "upstream_error", f"上游拒絕請求（{upstream.status_code}）"
+        )
+
+    async def relay():
+        sse_restorer = restorer.SSERestorer(table)
+        translator = anthropic_adapter.AnthropicStreamTranslator(
+            model=model, message_id=message_id
+        )
+        try:
+            async for chunk in upstream.aiter_bytes():
+                restored_chunk = sse_restorer.feed(chunk)
+                out = translator.feed(restored_chunk)
+                if out:
+                    yield out
+            tail = sse_restorer.flush()
+            out = translator.feed(tail) if tail else b""
+            out += translator.flush()
+            if out:
+                yield out
+        finally:
+            await upstream.aclose()
+            total = (time.perf_counter() - started) * 1000
+            logger.info(
+                "POST /messages（Claude Code）[SSE] -> %d 上游 %.0f ms｜遮蔽 %.1f ms｜還原 %d 筆%s",
+                upstream.status_code,
+                total,
+                detect_ms,
+                sse_restorer.restored,
+                f"（{sse_restorer.unknown} 筆查無對照）" if sse_restorer.unknown else "",
+            )
+
+    return StreamingResponse(relay(), media_type="text/event-stream")
 
 
 # ---------------------------------------------------------------------------
