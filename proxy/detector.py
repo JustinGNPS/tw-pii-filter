@@ -70,6 +70,22 @@ def detect(text: str, cache: DetectionCache | None = None) -> dict:
     return {"text": text, "spans": spans}
 
 
+def _extract_from_block_list(blocks: Any, base: Path) -> list[tuple[Path, str]]:
+    """從 `[{"type": "text", "text": "..."}, ...]` 這種 block 陣列取出文字欄位。
+
+    OpenAI 多模態 content parts 與 Anthropic 的 `content`/`system` 都是這個
+    形狀，因此共用同一段邏輯——不特別檢查 `type`，只要 block 上有字串型別的
+    `text` 欄位就收，跟原本 `_extract_from_message` 的行為一致。
+    """
+    found: list[tuple[Path, str]] = []
+    if not isinstance(blocks, list):
+        return found
+    for i, part in enumerate(blocks):
+        if isinstance(part, dict) and isinstance(part.get("text"), str):
+            found.append((base + (i, "text"), part["text"]))
+    return found
+
+
 def _extract_from_message(message: Any, base: Path) -> list[tuple[Path, str]]:
     """從單一 message 取出所有文字欄位。"""
     found: list[tuple[Path, str]] = []
@@ -81,9 +97,7 @@ def _extract_from_message(message: Any, base: Path) -> list[tuple[Path, str]]:
         found.append((base + ("content",), content))
     elif isinstance(content, list):
         # 多模態格式：content 是 [{"type": "text", "text": "..."}, ...]
-        for i, part in enumerate(content):
-            if isinstance(part, dict) and isinstance(part.get("text"), str):
-                found.append((base + ("content", i, "text"), part["text"]))
+        found.extend(_extract_from_block_list(content, base + ("content",)))
 
     # agent 讀檔的結果常常是以 tool call 參數的形式回到對話歷史裡
     tool_calls = message.get("tool_calls")
@@ -110,6 +124,8 @@ def extract_texts(payload: Any) -> list[tuple[Path, str]]:
     - `messages[i].tool_calls[j].function.arguments`
     - `prompt`（舊版 completions，字串或字串陣列）
     - `input`（embeddings，字串或字串陣列）
+    - `system`（Anthropic Messages API 專用欄位，字串或 block 陣列；
+      OpenAI 格式的請求不會有這個欄位，此處新增不影響既有行為）
     """
     found: list[tuple[Path, str]] = []
     if not isinstance(payload, dict):
@@ -119,6 +135,12 @@ def extract_texts(payload: Any) -> list[tuple[Path, str]]:
     if isinstance(messages, list):
         for i, message in enumerate(messages):
             found.extend(_extract_from_message(message, ("messages", i)))
+
+    system = payload.get("system")
+    if isinstance(system, str):
+        found.append((("system",), system))
+    elif isinstance(system, list):
+        found.extend(_extract_from_block_list(system, ("system",)))
 
     for key in ("prompt", "input"):
         value = payload.get(key)

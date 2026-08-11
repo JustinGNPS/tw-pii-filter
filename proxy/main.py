@@ -17,14 +17,17 @@ agent 那邊把 base URL 指到 `http://localhost:8000/v1` 即可。
 import asyncio
 import json
 import logging
+import os
 import sys
 import time
+import uuid
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import StreamingResponse
 
-from proxy import config, detector, forward, masker, restorer
+from proxy import anthropic_adapter, config, detector, forward, masker, restorer
 from proxy.mapping import MappingTable
 
 # Windows 主控台預設是 cp950，中文警告訊息可能會炸掉；統一轉成 utf-8
@@ -199,6 +202,279 @@ async def _proxy(path: str, request: Request) -> Response:
 
 
 _METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE"]
+
+
+# ---------------------------------------------------------------------------
+# Claude Code 相容性：7 步計畫第 3 步「純文字最小遮蔽」。
+#
+# AIR 不支援 Anthropic Messages API，所以這條路徑比其他 agent 多一層格式
+# 翻譯：Anthropic 請求 -> 遮蔽（沿用既有 masker，見 anthropic_adapter 模組
+# docstring）-> 翻成 OpenAI 相容格式送給 AIR -> 用既有 restorer 還原
+# -> 把還原後的文字包回 Anthropic 的串流事件格式。
+#
+# 範圍刻意限縮在純文字對話：`messages[]` 裡出現 `tool_use`/`tool_result`
+# 就代表超出目前能處理的範圍，誠實回報「還沒支援」，不要硬翻出來、
+# 讓 Claude Code 收到看似正常、實際上亂掉的回覆。
+# ---------------------------------------------------------------------------
+
+
+def _anthropic_error(status_code: int, error_type: str, message: str) -> Response:
+    return Response(
+        content=json.dumps(
+            {"type": "error", "error": {"type": error_type, "message": message}},
+            ensure_ascii=False,
+        ),
+        status_code=status_code,
+        media_type="application/json",
+    )
+
+
+def _mask_anthropic_payload(payload: dict, table: MappingTable) -> tuple[dict, float]:
+    """遮蔽 Anthropic 格式的請求 payload，回傳 (原 payload，花費的毫秒數)。
+
+    與 `_mask_request` 對稱：同步函式、丟到 thread pool 執行、失敗一律吞掉
+    原樣放行——proxy 的第一要務是不能弄壞 agent，這條路徑也不例外。
+    """
+    started = time.perf_counter()
+    try:
+        counts = masker.mask_payload(payload, table)
+        if counts:
+            logger.warning(
+                "已遮蔽（Claude Code）：%s｜快取命中率 %.0f%%",
+                detector.format_warning(counts),
+                detector.CACHE.hit_rate * 100,
+            )
+    except Exception as exc:  # noqa: BLE001 - 遮蔽失敗不能讓 agent 拿不到回覆
+        logger.error("遮蔽失敗，該次請求未受保護：%s", exc)
+    return payload, (time.perf_counter() - started) * 1000
+
+
+async def _proxy_anthropic(request: Request) -> Response:
+    table: MappingTable = request.app.state.mapping
+    raw_body = await request.body()
+    try:
+        payload = json.loads(raw_body.decode("utf-8")) if raw_body else {}
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        payload = None
+
+    if not isinstance(payload, dict):
+        return _anthropic_error(400, "invalid_request_error", "無法解析請求內容")
+
+    if anthropic_adapter.has_unsupported_content(payload):
+        return _anthropic_error(
+            501,
+            "not_implemented",
+            "此 proxy 尚未支援 Claude Code 的工具呼叫（tool_use/tool_result），"
+            "目前只支援純文字對話（開發中，見 docs/B_progress.md）",
+        )
+
+    started = time.perf_counter()
+    payload, detect_ms = await asyncio.to_thread(_mask_anthropic_payload, payload, table)
+
+    openai_request = anthropic_adapter.to_openai_request(payload, model=config.DEFAULT_MODEL)
+    openai_body = json.dumps(openai_request, ensure_ascii=False).encode("utf-8")
+
+    upstream = await forward.open_upstream(
+        request.app.state.client,
+        "POST",
+        "chat/completions",
+        None,
+        {"content-type": "application/json"},
+        openai_body,
+    )
+    content = await upstream.aread()
+    await upstream.aclose()
+
+    if upstream.status_code >= 400:
+        logger.error(
+            "Claude Code 轉換後的請求被上游拒絕：%d %s",
+            upstream.status_code,
+            content[:200],
+        )
+        return _anthropic_error(
+            502, "upstream_error", f"上游拒絕請求（{upstream.status_code}）"
+        )
+
+    restored = unknown = 0
+    if len(table):
+        content, restored, unknown = restorer.restore_body(content, table)
+
+    try:
+        openai_response = json.loads(content.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        logger.error("無法解析上游回覆：%s", exc)
+        return _anthropic_error(502, "upstream_error", "上游回覆格式無法解析")
+
+    reply_text = anthropic_adapter.extract_reply_text(openai_response)
+
+    total = (time.perf_counter() - started) * 1000
+    logger.info(
+        "POST /messages（Claude Code）-> %d 上游 %.0f ms｜遮蔽 %.1f ms｜還原 %d 筆%s",
+        upstream.status_code,
+        total,
+        detect_ms,
+        restored,
+        f"（{unknown} 筆查無對照）" if unknown else "",
+    )
+
+    message_id = f"msg_{uuid.uuid4().hex[:24]}"
+    sse = anthropic_adapter.text_event_stream(
+        reply_text,
+        model=payload.get("model") or config.DEFAULT_MODEL,
+        message_id=message_id,
+    )
+    return StreamingResponse(iter([sse]), media_type="text/event-stream")
+
+
+# ---------------------------------------------------------------------------
+# Claude Code 相容性開發用：暫時的 capture 模式（PII_CAPTURE_ANTHROPIC=1）。
+#
+# AIR 上游不支援 Anthropic Messages API（實測 POST /v1/messages 回 404
+# unsupported_endpoint，見 docs/B_progress.md），要做協定轉換前得先看 Claude
+# Code 真的送出什麼格式，不要照文件猜 —— 上次測 OpenCode 的教訓是文件沒提到
+# 的細節（tool_calls 沒被還原）才是真正會咬人的地方。
+#
+# 第一版只回 501，結果 CLI 收到錯誤就無限重送同一輪，永遠停在第一輪、看不到
+# tool_result 長什麼樣（跟 OpenCode 當初出事的正是這條路徑）。這版改成回一個
+# 偽造的 SSE，誘導 CLI 呼叫 Read 工具讀一個無害的測試檔，讓它真的執行、真的
+# 送出下一輪帶 tool_result 的請求——藉此在不用先寫完整協定轉換的情況下，
+# 把 tool_result 的真實格式也擷取下來。
+#
+# 這整段只記錄、不轉發、不做任何真正的協定轉換，寫好轉換層之後應該整段刪除。
+_CAPTURE_ANTHROPIC = os.getenv("PII_CAPTURE_ANTHROPIC", "").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+)
+_CAPTURE_DIR = Path(
+    os.getenv("PII_CAPTURE_DIR", r"D:\專題(new)\agent-tests\claude-code\captures")
+)
+_CAPTURE_TARGET_FILE = os.getenv(
+    "PII_CAPTURE_TARGET_FILE",
+    r"D:\專題(new)\agent-tests\claude-code\customer_export.py",
+)
+
+
+def _sse_event(event: str, data: dict) -> str:
+    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+def _fake_sse_tool_use(file_path: str) -> str:
+    """偽造一個呼叫 Read 工具的串流回覆，誘導 CLI 送出下一輪 tool_result。"""
+    msg_id = f"msg_capture_{uuid.uuid4().hex[:24]}"
+    tool_id = f"toolu_capture_{uuid.uuid4().hex[:24]}"
+    partial_json = json.dumps({"file_path": file_path}, ensure_ascii=False)
+
+    out = _sse_event(
+        "message_start",
+        {
+            "type": "message_start",
+            "message": {
+                "id": msg_id,
+                "type": "message",
+                "role": "assistant",
+                "content": [],
+                "model": "claude-sonnet-5",
+                "stop_reason": None,
+                "stop_sequence": None,
+                "usage": {"input_tokens": 1, "output_tokens": 1},
+            },
+        },
+    )
+    out += _sse_event(
+        "content_block_start",
+        {
+            "type": "content_block_start",
+            "index": 0,
+            "content_block": {
+                "type": "tool_use",
+                "id": tool_id,
+                "name": "Read",
+                "input": {},
+            },
+        },
+    )
+    out += _sse_event(
+        "content_block_delta",
+        {
+            "type": "content_block_delta",
+            "index": 0,
+            "delta": {"type": "input_json_delta", "partial_json": partial_json},
+        },
+    )
+    out += _sse_event(
+        "content_block_stop", {"type": "content_block_stop", "index": 0}
+    )
+    out += _sse_event(
+        "message_delta",
+        {
+            "type": "message_delta",
+            "delta": {"stop_reason": "tool_use", "stop_sequence": None},
+            "usage": {"output_tokens": 5},
+        },
+    )
+    out += _sse_event("message_stop", {"type": "message_stop"})
+    return out
+
+
+def _fake_sse_text(text: str) -> str:
+    """偽造一個純文字、end_turn 收尾的串流回覆，讓 CLI 停止重試該輪。
+
+    事件格式跟真正的 `_proxy_anthropic()` 送回去的一樣，直接借用
+    `anthropic_adapter.text_event_stream()`，capture 模式只是餵假文字進去。
+    """
+    return anthropic_adapter.text_event_stream(
+        text, model="claude-sonnet-5", message_id=f"msg_capture_{uuid.uuid4().hex[:24]}"
+    )
+
+
+def _has_tool_result(payload: dict) -> bool:
+    for message in payload.get("messages", []):
+        content = message.get("content")
+        if isinstance(content, list) and any(
+            block.get("type") == "tool_result" for block in content
+        ):
+            return True
+    return False
+
+
+@app.post("/v1/messages")
+async def anthropic_messages(request: Request) -> Response:
+    if _CAPTURE_ANTHROPIC:
+        return await _capture_anthropic_messages(request)
+    return await _proxy_anthropic(request)
+
+
+async def _capture_anthropic_messages(request: Request) -> Response:
+    body = await request.body()
+    _CAPTURE_DIR.mkdir(parents=True, exist_ok=True)
+    payload = json.loads(body.decode("utf-8")) if body else {}
+    record = {"headers": dict(request.headers), "body": payload}
+    # 偽造回覆幾乎零延遲，同一句任務的前後兩輪常常落在同一秒內送達；
+    # 檔名只到秒會讓後一輪蓋掉前一輪，補上隨機尾碼避免撞名遺失擷取樣本
+    out_path = _CAPTURE_DIR / f"{time.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:6]}.json"
+    out_path.write_text(
+        json.dumps(record, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    logger.info("已擷取 Claude Code 請求 -> %s", out_path)
+
+    tools = payload.get("tools") or []
+    if tools and not _has_tool_result(payload):
+        # 第一輪、CLI 有宣告工具：誘導呼叫 Read，換取下一輪的 tool_result 樣本
+        sse = _fake_sse_tool_use(_CAPTURE_TARGET_FILE)
+    elif tools:
+        # 已經收到 tool_result 了，正常收尾，不要再誘導下一次工具呼叫
+        sse = _fake_sse_text("（capture 模式：已取得 tool_result 樣本，結束回合）")
+    else:
+        # 無工具的輔助請求（例如 CLI 產生對話標題），給個合理內容讓它別一直重試
+        fmt = (payload.get("output_config") or {}).get("format") or {}
+        if fmt.get("type") == "json_schema":
+            text = json.dumps({"title": "Claude Code capture 測試"}, ensure_ascii=False)
+        else:
+            text = "(capture-only mode)"
+        sse = _fake_sse_text(text)
+
+    return StreamingResponse(iter([sse]), media_type="text/event-stream")
 
 
 @app.api_route("/v1/{path:path}", methods=_METHODS)
