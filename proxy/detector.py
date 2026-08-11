@@ -86,6 +86,25 @@ def _extract_from_block_list(blocks: Any, base: Path) -> list[tuple[Path, str]]:
     return found
 
 
+def _extract_strings(value: Any, base: Path) -> list[tuple[Path, str]]:
+    """遞迴走訪任意巢狀 dict/list，找出每個字串葉節點。
+
+    用在 Anthropic 的 `tool_use.input`——工具參數是任意深度的 JSON 物件，
+    不像 OpenAI 的 `function.arguments` 是單一字串可以整段當文字掃，
+    必須逐個字串欄位掃過去，才能找到（並在遮蔽時寫回）藏在深處的個資。
+    """
+    found: list[tuple[Path, str]] = []
+    if isinstance(value, str):
+        found.append((base, value))
+    elif isinstance(value, dict):
+        for key, sub in value.items():
+            found.extend(_extract_strings(sub, base + (key,)))
+    elif isinstance(value, list):
+        for i, sub in enumerate(value):
+            found.extend(_extract_strings(sub, base + (i,)))
+    return found
+
+
 def _extract_from_message(message: Any, base: Path) -> list[tuple[Path, str]]:
     """從單一 message 取出所有文字欄位。"""
     found: list[tuple[Path, str]] = []
@@ -98,6 +117,26 @@ def _extract_from_message(message: Any, base: Path) -> list[tuple[Path, str]]:
     elif isinstance(content, list):
         # 多模態格式：content 是 [{"type": "text", "text": "..."}, ...]
         found.extend(_extract_from_block_list(content, base + ("content",)))
+
+        # Anthropic 專用的兩種 block：
+        # - tool_use.input 是 AI 決定呼叫工具時的參數，一旦被還原過就帶著
+        #   真值，重送歷史時必須重新掃描（見 anthropic_adapter 模組 docstring）
+        # - tool_result.content 是工具實際執行的結果（例如讀檔內容），
+        #   字串或文字 block 陣列都要收
+        for i, block in enumerate(content):
+            if not isinstance(block, dict):
+                continue
+            if block.get("type") == "tool_use" and isinstance(block.get("input"), dict):
+                found.extend(
+                    _extract_strings(block["input"], base + ("content", i, "input"))
+                )
+            elif block.get("type") == "tool_result":
+                tr_content = block.get("content")
+                tr_base = base + ("content", i, "content")
+                if isinstance(tr_content, str):
+                    found.append((tr_base, tr_content))
+                elif isinstance(tr_content, list):
+                    found.extend(_extract_from_block_list(tr_content, tr_base))
 
     # agent 讀檔的結果常常是以 tool call 參數的形式回到對話歷史裡
     tool_calls = message.get("tool_calls")

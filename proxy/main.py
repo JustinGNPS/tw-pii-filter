@@ -205,16 +205,18 @@ _METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE"]
 
 
 # ---------------------------------------------------------------------------
-# Claude Code 相容性：7 步計畫第 3 步「純文字最小遮蔽」。
+# Claude Code 相容性：7 步計畫第 3 步「純文字最小遮蔽」+ 第 4 步「工具呼叫
+# 遞迴處理」。
 #
 # AIR 不支援 Anthropic Messages API，所以這條路徑比其他 agent 多一層格式
 # 翻譯：Anthropic 請求 -> 遮蔽（沿用既有 masker，見 anthropic_adapter 模組
-# docstring）-> 翻成 OpenAI 相容格式送給 AIR -> 用既有 restorer 還原
-# -> 把還原後的文字包回 Anthropic 的串流事件格式。
+# docstring）-> 翻成 OpenAI 相容格式送給 AIR（含 tools/tool_calls/tool_result
+# 的轉換）-> 用既有 restorer 還原 -> 把還原後的內容包回 Anthropic 的串流
+# 事件格式（純文字或 tool_use block）。
 #
-# 範圍刻意限縮在純文字對話：`messages[]` 裡出現 `tool_use`/`tool_result`
-# 就代表超出目前能處理的範圍，誠實回報「還沒支援」，不要硬翻出來、
-# 讓 Claude Code 收到看似正常、實際上亂掉的回覆。
+# 範圍仍然限縮：圖片／文件附件（`image`/`document` block）還不會翻譯，
+# 遇到就誠實回報「還沒支援」，不要硬翻出來讓 Claude Code 收到看似正常、
+# 實際上亂掉的回覆。
 # ---------------------------------------------------------------------------
 
 
@@ -264,8 +266,8 @@ async def _proxy_anthropic(request: Request) -> Response:
         return _anthropic_error(
             501,
             "not_implemented",
-            "此 proxy 尚未支援 Claude Code 的工具呼叫（tool_use/tool_result），"
-            "目前只支援純文字對話（開發中，見 docs/B_progress.md）",
+            "此 proxy 尚未支援圖片／文件附件內容（純文字對話與工具呼叫已支援，"
+            "開發中，見 docs/B_progress.md）",
         )
 
     started = time.perf_counter()
@@ -305,8 +307,6 @@ async def _proxy_anthropic(request: Request) -> Response:
         logger.error("無法解析上游回覆：%s", exc)
         return _anthropic_error(502, "upstream_error", "上游回覆格式無法解析")
 
-    reply_text = anthropic_adapter.extract_reply_text(openai_response)
-
     total = (time.perf_counter() - started) * 1000
     logger.info(
         "POST /messages（Claude Code）-> %d 上游 %.0f ms｜遮蔽 %.1f ms｜還原 %d 筆%s",
@@ -318,8 +318,8 @@ async def _proxy_anthropic(request: Request) -> Response:
     )
 
     message_id = f"msg_{uuid.uuid4().hex[:24]}"
-    sse = anthropic_adapter.text_event_stream(
-        reply_text,
+    sse = anthropic_adapter.response_to_event_stream(
+        openai_response,
         model=payload.get("model") or config.DEFAULT_MODEL,
         message_id=message_id,
     )
