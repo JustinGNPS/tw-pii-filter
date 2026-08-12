@@ -442,6 +442,29 @@ D 修好 512 token 截斷問題後重新實測 **recall 97.6%**，比修之前�
 快取暖起來，之後就順了。模型載入本身（約 3,951 ms）已經由 `lifespan()` 在
 啟動時預熱掉，不算在這 13 秒裡。
 
+#### ⚠️ 不要「最佳化」成跳過 `system` 欄位
+
+看到「95% 成本花在 agent 的樣板文字上」，很自然會想到：那就別掃 `system`
+不就好了？**不可以。**
+
+`system` 陣列裡確實大部分是 Anthropic 寫死的指令，但**不是全部**。同一份
+capture 裡就有一個 306 字元的欄位長這樣：
+
+```
+<system-reminder>
+As you answer the user's questions, you can use the following context:
+# claudeMd ...
+```
+
+這是 Claude Code 把**專案的 `CLAUDE.md` 與使用者的記憶檔內容注入 system
+prompt** —— 那是不折不扣的使用者內容，可能含個資。08-11 開發協定轉換層時也
+發現過 `messages[].role == "system"` 的中途系統訊息同樣會夾帶使用者內容。
+
+**判準是「這段文字從哪來」，不是「它在哪個欄位」**，而 proxy 沒有可靠的方法
+從 payload 區分哪一段是 Anthropic 寫的、哪一段是使用者的。掃描範圍寧可過寬
+（多花時間）也不能過窄（漏掉個資）—— 而且成本問題已經被快取解決了，這個
+最佳化省不到真正的錢，只會換來漏掃的風險。
+
 ---
 
 ## 六、agent 相容性
