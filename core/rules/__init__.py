@@ -1,5 +1,6 @@
 """core.rules 套件：統一匯出所有 PII 偵測規則，並提供 detect_all() 一次執行全部規則。"""
 
+from core.risk.combination_risk import compute_combination_risk
 from core.rules.api_key import detect_api_key, is_valid_api_key
 from core.rules.conflict_resolver import renumber_replacements, resolve_overlaps
 from core.rules.credit_card import detect_credit_card, is_valid_credit_card
@@ -56,6 +57,11 @@ def detect_all(text: str, extra_spans: list = None) -> dict:
 
     extra_spans 中每個 span 必須符合 docs/interface.md 定義的欄位格式
     （start/end/type/text/confidence/source/replacement），source 應為 "model"。
+
+    回傳的 `combination_risk` 為 Layer 3 組合風險評分（見
+    `core.risk.combination_risk.compute_combination_risk()` 與
+    `docs/layer3_spec.md`），依 Layer 4 仲裁後的 spans 計算；沒有組合風險
+    （score 為 0，即準識別子共現數 < 2）時為 `None`，屬選填欄位。
     """
     spans = []
     for detector in _DETECTORS:
@@ -67,4 +73,7 @@ def detect_all(text: str, extra_spans: list = None) -> dict:
     spans = resolve_overlaps(spans)
     spans = renumber_replacements(spans)
 
-    return {"text": text, "spans": spans}
+    risk = compute_combination_risk(text, spans)
+    combination_risk = risk if risk["score"] > 0 else None
+
+    return {"text": text, "spans": spans, "combination_risk": combination_risk}

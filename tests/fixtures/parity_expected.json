@@ -20,7 +20,8 @@
         "source": "rule",
         "replacement": "[EMAIL_1]"
       }
-    ]
+    ],
+    "combination_risk": null
   },
   {
     "text": "身分證 A123456789 與 A123456780 只有一碼之差",
@@ -34,7 +35,8 @@
         "source": "rule",
         "replacement": "[TW_ID_1]"
       }
-    ]
+    ],
+    "combination_risk": null
   },
   {
     "text": "客戶身分證：F131104093、H224567890、J101234567",
@@ -48,15 +50,18 @@
         "source": "rule",
         "replacement": "[TW_ID_1]"
       }
-    ]
+    ],
+    "combination_risk": null
   },
   {
     "text": "沒有任何敏感資訊的一段普通中文句子。",
-    "spans": []
+    "spans": [],
+    "combination_risk": null
   },
   {
     "text": "",
-    "spans": []
+    "spans": [],
+    "combination_risk": null
   },
   {
     "text": "公司統編 12345675，另一家是 04595257",
@@ -79,7 +84,8 @@
         "source": "rule",
         "replacement": "[TW_TAX_2]"
       }
-    ]
+    ],
+    "combination_risk": null
   },
   {
     "text": "統編第七碼特例測試 10458574 與 12345676",
@@ -102,7 +108,8 @@
         "source": "rule",
         "replacement": "[TW_TAX_2]"
       }
-    ]
+    ],
+    "combination_risk": null
   },
   {
     "text": "健保卡號 000012345678，卡號後面接著文字",
@@ -116,7 +123,8 @@
         "source": "rule",
         "replacement": "[TW_NHI_1]"
       }
-    ]
+    ],
+    "combination_risk": null
   },
   {
     "text": "手機 0912345678、0912-345-678、0912345679",
@@ -148,7 +156,8 @@
         "source": "rule",
         "replacement": "[TW_PHONE_M_3]"
       }
-    ]
+    ],
+    "combination_risk": null
   },
   {
     "text": "市話 02-23456789 與 (02)2345-6789 以及 0423456789",
@@ -180,7 +189,8 @@
         "source": "rule",
         "replacement": "[TW_PHONE_L_3]"
       }
-    ]
+    ],
+    "combination_risk": null
   },
   {
     "text": "聯絡我 a0912345678@gmail.com",
@@ -194,7 +204,8 @@
         "source": "rule",
         "replacement": "[EMAIL_1]"
       }
-    ]
+    ],
+    "combination_risk": null
   },
   {
     "text": "信箱 user.name+tag@sub.domain.co.uk 與 bad@@example.com",
@@ -208,7 +219,8 @@
         "source": "rule",
         "replacement": "[EMAIL_1]"
       }
-    ]
+    ],
+    "combination_risk": null
   },
   {
     "text": "信用卡 4111111111111111 與 4111 1111 1111 1111",
@@ -231,11 +243,13 @@
         "source": "rule",
         "replacement": "[CREDIT_CARD_2]"
       }
-    ]
+    ],
+    "combination_risk": null
   },
   {
     "text": "信用卡 4111-1111-1111-1112 這張是錯的",
-    "spans": []
+    "spans": [],
+    "combination_risk": null
   },
   {
     "text": "API_KEY=sk-abcdefghijklmnopqrstuvwx1234",
@@ -249,7 +263,8 @@
         "source": "rule",
         "replacement": "[API_KEY_1]"
       }
-    ]
+    ],
+    "combination_risk": null
   },
   {
     "text": "token=abcdef123456 password='p@ssw0rd123'",
@@ -263,7 +278,8 @@
         "source": "rule",
         "replacement": "[API_KEY_1]"
       }
-    ]
+    ],
+    "combination_risk": null
   },
   {
     "text": "sk-ant-api03-AAAAAAAAAAAAAAAAAAAAAAAAAAAA ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
@@ -286,7 +302,8 @@
         "source": "rule",
         "replacement": "[API_KEY_2]"
       }
-    ]
+    ],
+    "combination_risk": null
   },
   {
     "text": "AKIAIOSFODNN7EXAMPLE 與 AIzaSyAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
@@ -309,7 +326,8 @@
         "source": "rule",
         "replacement": "[API_KEY_2]"
       }
-    ]
+    ],
+    "combination_risk": null
   },
   {
     "text": "JWT eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.dBjftJeZ4CVPmB92K27uhbUJU1p1r_wW1gFWFOEjXk",
@@ -323,7 +341,8 @@
         "source": "rule",
         "replacement": "[API_KEY_1]"
       }
-    ]
+    ],
+    "combination_risk": null
   },
   {
     "text": "病歷摘要：病患 A123456789，聯絡 0912345678，住台北市，信箱 patient@hospital.tw",
@@ -355,7 +374,8 @@
         "source": "rule",
         "replacement": "[EMAIL_1]"
       }
-    ]
+    ],
+    "combination_risk": null
   },
   {
     "text": "履歷：陳大文，統編 12345675，手機 0987654321，email chen@company.com.tw",
@@ -387,7 +407,8 @@
         "source": "rule",
         "replacement": "[EMAIL_1]"
       }
-    ]
+    ],
+    "combination_risk": null
   },
   {
     "text": "混合 A123456789 0912345678 12345675 test@x.com 4111111111111111 全部一起",
@@ -437,19 +458,23 @@
         "source": "rule",
         "replacement": "[CREDIT_CARD_1]"
       }
-    ]
+    ],
+    "combination_risk": null
   },
   {
     "text": "邊界：xA123456789 與 A1234567890 都不該被抓",
-    "spans": []
+    "spans": [],
+    "combination_risk": null
   },
   {
     "text": "邊界：手機前後接數字 10912345678 與 09123456789",
-    "spans": []
+    "spans": [],
+    "combination_risk": null
   },
   {
     "text": "全形數字 Ａ１２３４５６７８９ 與全形手機 ０９１２３４５６７８",
-    "spans": []
+    "spans": [],
+    "combination_risk": null
   },
   {
     "text": "換行\n身分證 A123456789\n手機 0912345678\n結束",
@@ -472,7 +497,8 @@
         "source": "rule",
         "replacement": "[TW_PHONE_M_1]"
       }
-    ]
+    ],
+    "combination_risk": null
   },
   {
     "text": "重複同值 A123456789 又出現一次 A123456789",
@@ -495,10 +521,12 @@
         "source": "rule",
         "replacement": "[TW_ID_2]"
       }
-    ]
+    ],
+    "combination_risk": null
   },
   {
     "text": "半形括號市話 (02) 2345 6789 與 02 2345 6789",
-    "spans": []
+    "spans": [],
+    "combination_risk": null
   }
 ]
