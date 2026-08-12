@@ -26,7 +26,8 @@ detect(text: str) -> dict
       "source": "rule",
       "replacement": "[TW_ID_1]"
     }
-  ]
+  ],
+  "combination_risk": null
 }
 ```
 
@@ -36,6 +37,7 @@ detect(text: str) -> dict
 |---|---|---|
 | `text` | string | 原始輸入文字，未經修改 |
 | `spans` | array | 偵測到的 PII 片段列表，依 `start` 升序排列 |
+| `combination_risk` | object \| null | Layer 3 組合風險評分（選填欄位），見下方「組合風險評分（`combination_risk`，Layer 3）」；沒有組合風險時為 `null` |
 
 ### `spans[]` 欄位
 
@@ -131,6 +133,47 @@ detect_all(text, extra_spans=None) -> dict
 範例：輸入 `"聯絡我 a0912345678@gmail.com"`，`EMAIL` 抓到 `a0912345678@gmail.com`（長度 21），`TW_PHONE_M` 抓到裡面的 `0912345678`（長度 10），兩者重疊；依規則 1，範圍較大的 `EMAIL` 勝出，`TW_PHONE_M` 被移除，`detect_all` 最終只回傳 `EMAIL` 這一筆。
 
 > 注意：只有 `detect_all` 保證無重疊、無跳號。若 B、C 直接呼叫個別偵測器的 `detect_xxx(text)`，回傳的 spans **未經**此仲裁與重新編號，彼此仍可能重疊。
+
+## 組合風險評分（`combination_risk`，Layer 3）
+
+Layer 1（規則層）與 Layer 2（語意層）抓的是「明確的個資」；Layer 3 抓的是另一類問題：單獨看都不是個資、但組合起來能定位到特定個人的「準識別子」（例如「32歲」+「新竹」+「資深後端工程師」）。完整規格見 `docs/layer3_spec.md`，實作於 `core/risk/combination_risk.py::compute_combination_risk(text, spans)`。
+
+`detect_all` 在 Layer 4 仲裁完成、`spans` 確定之後，會把 `text` 與最終的 `spans` 一起交給 `compute_combination_risk()`，計算結果放進頂層的 `combination_risk` 欄位：
+
+```json
+{
+  "score": 0.85,
+  "contributing_types": ["ADDRESS", "AGE", "POSITION"],
+  "risk_level": "高",
+  "suggestions": [
+    "「32歲」建議泛化為「30-34歲」",
+    "地址建議泛化到市/縣級（例如「信義區光復路259巷」→「台北市」）",
+    "職稱可保留，但建議避免同時透露服務公司名稱"
+  ]
+}
+```
+
+### `combination_risk` 欄位
+
+| 欄位 | 型別 | 說明 |
+|---|---|---|
+| `score` | float | 風險分數，`0.0`–`1.0`，由 `contributing_types` 各自的識別力權重加總後封頂 |
+| `contributing_types` | array\<string\> | 造成風險的準識別子類別，依字母排序、去重 |
+| `risk_level` | string | 風險等級：`"高"` / `"中"` / `"低"` |
+| `suggestions` | array\<string\> | 對應每個 `contributing_types` 的泛化建議（把精確值換成範圍） |
+
+### 選填、可為 `null`
+
+**只有** `text`/`spans` 是 `detect_all` 一定會回傳的欄位。`combination_risk` 屬選填欄位，計算後若 `score` 為 `0`（準識別子共現數 `< 2`，單一準識別子不構成組合風險）則整個欄位為 `null`，而不是回傳 `score: 0` 的空殼物件——下游只要檢查 `combination_risk` 是否為 `null`，就能判斷這段文字有沒有組合風險，不需要再檢查 `score` 是否為 `0`。
+
+### 準識別子的來源
+
+`contributing_types` 目前涵蓋的類別分兩種來源：
+
+- **語意層 spans**：`ADDRESS` / `POSITION` / `COMPANY` / `ORGANIZATION` / `GOVERNMENT` / `SCENE`——來自 `extra_spans`（Layer 2 語意層結果），`compute_combination_risk` 直接檢查 Layer 4 仲裁後的 `spans` 裡有沒有這些型別
+- **獨立正則偵測**：`AGE` / `GENDER`——語意層模型沒有對應標籤，`compute_combination_risk` 自己對 `text` 做正則/關鍵字掃描，不需要透過 `spans` 帶入
+
+因此若呼叫 `detect_all(text)` 時沒有傳入 `extra_spans`（未接語意層），`contributing_types` 只可能包含 `AGE`/`GENDER`；要看到 `ADDRESS`/`POSITION` 這類準識別子造成的風險，呼叫端必須先把語意層（`core.ner.detect_ner()`）的結果當 `extra_spans` 傳入。
 
 ## 約定事項
 
