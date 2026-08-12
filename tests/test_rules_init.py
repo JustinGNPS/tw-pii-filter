@@ -170,12 +170,19 @@ class DetectAllTests(unittest.TestCase):
         text = "身分證 A123456789。"
         result = detect_all(text)
 
-        self.assertEqual(set(result.keys()), {"text", "spans"})
+        self.assertEqual(set(result.keys()), {"text", "spans", "combination_risk"})
         for span in result["spans"]:
             self.assertEqual(
                 set(span.keys()),
                 {"start", "end", "type", "text", "confidence", "source", "replacement"},
             )
+
+    def test_combination_risk_is_none_without_enough_quasi_identifiers(self):
+        # 只有 TW_ID 這種規則層型別，不是準識別子，共現數 < 2。
+        text = "身分證 A123456789。"
+        result = detect_all(text)
+
+        self.assertIsNone(result["combination_risk"])
 
 
 class DetectAllExtraSpansIntegrationTests(unittest.TestCase):
@@ -240,6 +247,77 @@ class DetectAllExtraSpansIntegrationTests(unittest.TestCase):
         result = detect_all(text)
 
         self.assertEqual(len(result["spans"]), 1)
+
+
+class CombinationRiskIntegrationTests(unittest.TestCase):
+    """detect_all() 頂層 combination_risk 欄位（Layer 3，issue #20）的整合測試。
+
+    ADDRESS/POSITION 這類準識別子來自語意層（NER），detect_all() 本身不會
+    偵測，因此這裡透過 extra_spans 模擬 NER 已經產生的結果 —— 跟 proxy 端
+    `detector._extra_spans()` 實際接線時的資料形狀一致。AGE 則是
+    compute_combination_risk() 自己對原文做正則掃描，不需要透過 spans 帶入。
+    """
+
+    def _model_span(self, start, end, text, type_, confidence=0.85):
+        return {
+            "start": start,
+            "end": end,
+            "type": type_,
+            "text": text,
+            "confidence": confidence,
+            "source": "model",
+            "replacement": f"[{type_}_1]",
+        }
+
+    def test_age_address_position_combination_produces_high_risk(self):
+        # 對應報告 4.3 節的經典例子：沒有直接 PII 字串，
+        # 但「年齡 + 地區 + 職稱」組合起來能定位到特定人。
+        text = "他32歲，住在新竹，是一名工程師。"
+        address_span = self._model_span(
+            text.index("新竹"), text.index("新竹") + 2, "新竹", "ADDRESS",
+        )
+        position_span = self._model_span(
+            text.index("工程師"), text.index("工程師") + 3, "工程師", "POSITION",
+        )
+
+        result = detect_all(text, extra_spans=[address_span, position_span])
+
+        risk = result["combination_risk"]
+        self.assertIsNotNone(risk)
+        self.assertEqual(risk["contributing_types"], ["ADDRESS", "AGE", "POSITION"])
+        self.assertAlmostEqual(risk["score"], 0.85)  # 0.30 + 0.35 + 0.20
+        self.assertEqual(risk["risk_level"], "高")
+        self.assertTrue(risk["suggestions"])  # 三個型別都該有對應的泛化建議
+
+    def test_single_quasi_identifier_alone_is_not_enough_for_risk(self):
+        # 只有一個準識別子（POSITION）不構成組合風險，score 應為 0 -> None。
+        text = "他是一名工程師。"
+        position_span = self._model_span(
+            text.index("工程師"), text.index("工程師") + 3, "工程師", "POSITION",
+        )
+
+        result = detect_all(text, extra_spans=[position_span])
+
+        self.assertIsNone(result["combination_risk"])
+
+    def test_combination_risk_uses_layer4_resolved_spans_not_raw_extra_spans(self):
+        # combination_risk 的計算依據應該是仲裁後的 spans（result["spans"]），
+        # 不是呼叫端傳進來的原始 extra_spans —— 這裡讓 POSITION 與規則層的
+        # TW_ID 完全重疊、範圍相同、confidence 也相同，仲裁後 model 版 POSITION
+        # 會被 rule 版 TW_ID 蓋掉（見 interface.md 仲裁順序第三條），
+        # 因此不該再被算進 contributing_types。
+        text = "A123456789"
+        rule_span = detect_all(text)["spans"][0]
+        fake_position_same_range = self._model_span(
+            rule_span["start"], rule_span["end"], rule_span["text"], "POSITION",
+            confidence=rule_span["confidence"],
+        )
+
+        result = detect_all(text, extra_spans=[fake_position_same_range])
+
+        types_found = {span["type"] for span in result["spans"]}
+        self.assertEqual(types_found, {"TW_ID"})  # POSITION 被仲裁掉了
+        self.assertIsNone(result["combination_risk"])
 
 
 if __name__ == "__main__":

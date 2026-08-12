@@ -58,11 +58,39 @@ export interface Span {
   replacement: string;
 }
 
+/** Layer 3 組合風險評分的風險等級，對應 docs/interface.md「組合風險評分」一節。 */
+export type RiskLevel = '高' | '中' | '低';
+
+/**
+ * Layer 3：組合風險評分結果。對應 Python 版
+ * `core/risk/combination_risk.py::compute_combination_risk()` 與
+ * `docs/layer3_spec.md`。
+ */
+export interface CombinationRisk {
+  /** 風險分數，0.0–1.0 */
+  score: number;
+  /** 造成風險的準識別子類別，依字母排序、去重 */
+  contributing_types: string[];
+  risk_level: RiskLevel;
+  /** 對應每個 contributing_types 的泛化建議 */
+  suggestions: string[];
+}
+
 export interface DetectionResult {
   /** 原始輸入文字，未經修改 */
   text: string;
   /** 偵測到的片段，依 start 升序排列 */
   spans: Span[];
+  /**
+   * Layer 3 組合風險評分（選填欄位，見 docs/interface.md）；
+   * 沒有組合風險（或尚未計算，見 `detectAll()` 的說明）時為 `null`。
+   *
+   * 型別設為選填（`?`）對應 Python 版的不對稱：個別 `detect_xxx()` 偵測器
+   * 的回傳值本來就沒有這個鍵（Layer 3 只在 `detect_all()`/`detectAll()`
+   * 合併、仲裁完 spans 之後才計算），只有 `detectAll()` 一律會設值
+   * （沒有風險時明確設為 `null`，而不是省略）。
+   */
+  combination_risk?: CombinationRisk | null;
 }
 
 /** 單一偵測器的函式簽章。 */

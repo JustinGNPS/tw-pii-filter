@@ -11,15 +11,18 @@
         "source": "rule",
         "replacement": "[TW_TAX_1]"
       }
-    ]
+    ],
+    "combination_risk": null
   },
   {
     "text": "身分證 Ａ１２３４５６７８９",
-    "spans": []
+    "spans": [],
+    "combination_risk": null
   },
   {
     "text": "手機 ０９１２３４５６７８",
-    "spans": []
+    "spans": [],
+    "combination_risk": null
   },
   {
     "text": "健保卡 ００００１２３４５６７８",
@@ -33,6 +36,7 @@
         "source": "rule",
         "replacement": "[TW_NHI_1]"
       }
-    ]
+    ],
+    "combination_risk": null
   }
 ]

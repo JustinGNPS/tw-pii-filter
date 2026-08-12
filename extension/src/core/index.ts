@@ -79,7 +79,14 @@ export function detectAll(text: string, extraSpans?: Span[] | null): DetectionRe
   spans = resolveOverlaps(spans);
   spans = renumberReplacements(spans);
 
-  return { text, spans };
+  // Layer 3（組合風險評分，見 docs/interface.md「組合風險評分」一節）尚未
+  // 移植到 TypeScript 版：Python 版的 compute_combination_risk() 需要
+  // ADDRESS/POSITION 這類準識別子 span（來自語意層/NER，擴充目前沒有）
+  // 與 AGE/GENDER 的獨立正則掃描（TS 版尚無對應實作）。型別先對齊
+  // Python 版的契約（見 CombinationRisk），實際計算邏輯留待移植
+  // core/risk/combination_risk.py 時一併補上——因此一律回傳 null，
+  // 而不是省略這個欄位，避免下游誤把「沒有欄位」跟「沒有風險」混為一談。
+  return { text, spans, combination_risk: null };
 }
 
 /**
