@@ -32,9 +32,18 @@ TODO(D): 仍待確認：
     = 512，超過此長度的文字後段會被無聲截斷、完全不會被掃到（實測 1501 字元的
     文字產生 788 token，明顯超標；把假姓名放在第 2000 字元後完全偵測不到）。
     已改為超過 CHUNK_CHAR_LIMIT（400 字元）自動切成有重疊的分段分別處理，
-    座標位移換算回原文位置後合併、去重。已知限制：去重靠 (start,end,type)
-    精確比對，極端情況下同一實體在不同分段被判斷出些微不同邊界時不會合併；
-    分段處理也會讓長文字的推論時間變長（多次呼叫模型），需要重新量測延遲。
+    座標位移換算回原文位置後合併、去重。
+  - 已修正分段邊界殘影問題（用 eval_precision_recall.py 實測 crm_notes.md
+    的「徐建」案例發現）：某個字剛好卡在分段邊界時，缺少完整上下文的那段可能
+    把實體判斷得比較短（例如兩字姓名被切成只剩一字），另一段有完整上下文則
+    判斷正確。原本的去重邏輯只比對精確座標，抓不到這種「座標不同但明顯是
+    同一實體」的殘影，導致較短的殘影在下游 IoU 比對時卡在門檻上搶走正確答案
+    的配對資格。已改成「重疊即視為同一實體、保留範圍較大者」。
+  - eval_precision_recall.py 曾出現一筆看似誤判的「陳志明」（customer_export.py）：
+    查證後這不是偵測器問題，是 generate_fake_code_samples.py 的 __main__ 註解
+    裡寫死了一個跟真正顧客名單無關的範例名字，從未被納入 ground truth。模型
+    偵測到它其實是正確的（那本來就是個名字），只是評估腳本的正確答案沒收錄。
+    之後如需要更乾淨的評估基準，應調整語料產生器，不用改偵測器本身。
   - 已加上 _get_detector() 的 double-checked locking（C 在 review B 的 PR #11
     asyncio.to_thread 整合時發現）：避免併發請求下模型被重複載入
 """
@@ -59,6 +68,15 @@ class NERDetector:
     # （模型本身的判斷力問題，無法從程式碼層面根治，這只是降低雜訊的權宜措施，
     # 不是完整解法——過濾條件仍可能誤殺極少數合法的短地址，需持續觀察調整）。
     ADDRESS_INDICATOR_CHARS = set("市縣區鄉鎮村里路街巷弄號樓段道")
+
+    # 完全排除的型別：實測發現模型對這些型別的偵測是破碎雜訊，沒有任何補強價值。
+    # 回應 B 的假設（全形手機規則層抓不到，語意層說不定能補上）——實測結果剛好
+    # 相反：半形手機語意層完全偵測不到（MOBILE 型別等於不存在）；全形手機語意層
+    # 只抓到單一個全形數字字元、還誤標成 EMAIL；半形信箱語意層抓到的是破碎片段
+    # （單獨的 "@"、單獨的 ".com"），不是完整信箱。這兩個型別規則層本來就用
+    # 正則/格式驗證處理得又快又準，語意層在這裡不只沒有互補價值，還會製造雜訊
+    # 實體，故直接排除，不送給下游。
+    EXCLUDED_TYPES = {"EMAIL", "MOBILE"}
 
     # 分段處理相關常數（回應 B 7/31 提出、實測確認存在的 512 token 截斷問題）：
     # 模型 tokenizer.model_max_length = 512，實測 1501 字元的文字會產生 788 個
@@ -99,6 +117,10 @@ class NERDetector:
             entity_text = text[start:end]
             entity_type = ent.get("entity_group", "").upper()
 
+            # 完全排除的型別（EMAIL/MOBILE）：實測是破碎雜訊，規則層處理得更好
+            if entity_type in self.EXCLUDED_TYPES:
+                continue
+
             # 地址合理性檢查：不含任何地址關鍵字的字串（例如斷詞邊界切出來的
             # 「啡廳」）視為雜訊，直接過濾，不送給下游
             if entity_type == "ADDRESS" and not any(
@@ -129,23 +151,33 @@ class NERDetector:
     @staticmethod
     def _dedupe(entities: List[Dict]) -> List[Dict]:
         """
-        相鄰分段有重疊，重疊區域裡的實體可能被偵測兩次（兩段都掃到同一段文字）。
-        用 (start, end, type) 當 key 去重——完全落在重疊區域內的實體，兩次偵測到
-        的絕對座標理應相同，可以精準去重。
+        相鄰分段有重疊，重疊區域裡的實體可能被偵測兩次。
 
-        已知限制：如果同一實體在兩個分段各自被判斷出些微不同的邊界（跨過重疊區邊緣
-        的極端情況），這裡不會合併，可能留下一筆不完全重複的殘影。這是分段處理的
-        已知取捨，不是完整解法，之後如有需要可以再加邊界合併邏輯。
+        改用「重疊即視為同一實體、保留範圍較大（較完整）的那筆」，不是只用
+        (start,end,type) 精確比對——精確比對抓不到這種情況：某個字剛好卡在
+        分段邊界，該分段因為缺少完整上下文，把實體判斷得比較短（例如兩字
+        姓名被切斷成只剩一字），另一個有完整上下文的分段判斷出正確的完整
+        範圍。兩筆座標不同，精確比對不會去重，兩筆都留下——而較短的那筆
+        殘影，在下游用 IoU 比對答案時，可能剛好卡在門檻上搶走正確答案的
+        比對資格，讓真正完整、正確的那筆反而被判定成配對失敗。
+
+        做法：依範圍長度（end-start）由大到小排序，範圍大的優先保留；
+        同型別、且與任一已保留實體有重疊的，視為同一實體的殘影，捨棄。
         """
-        seen = set()
-        deduped = []
-        for ent in entities:
-            key = (ent["start"], ent["end"], ent["type"])
-            if key in seen:
-                continue
-            seen.add(key)
-            deduped.append(ent)
-        return sorted(deduped, key=lambda e: e["start"])
+        sorted_entities = sorted(entities, key=lambda e: e["end"] - e["start"], reverse=True)
+        kept: List[Dict] = []
+        for ent in sorted_entities:
+            is_duplicate = False
+            for k in kept:
+                if k["type"] != ent["type"]:
+                    continue
+                overlap = max(0, min(k["end"], ent["end"]) - max(k["start"], ent["start"]))
+                if overlap > 0:
+                    is_duplicate = True
+                    break
+            if not is_duplicate:
+                kept.append(ent)
+        return sorted(kept, key=lambda e: e["start"])
 
     def detect(self, text: str, min_confidence: float = DEFAULT_MIN_CONFIDENCE) -> List[Dict]:
         """
