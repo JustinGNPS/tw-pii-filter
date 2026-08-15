@@ -162,7 +162,8 @@ class NERDetector:
         比對資格，讓真正完整、正確的那筆反而被判定成配對失敗。
 
         做法：依範圍長度（end-start）由大到小排序，範圍大的優先保留；
-        同型別、且與任一已保留實體有重疊的，視為同一實體的殘影，捨棄。
+        只有同型別、且被任一已保留實體「完全包含」的結果，才視為同一實體
+        的殘影而捨棄。僅部分重疊的結果可能代表不同實體，必須保留，避免漏遮蔽。
         """
         sorted_entities = sorted(entities, key=lambda e: e["end"] - e["start"], reverse=True)
         kept: List[Dict] = []
@@ -171,8 +172,11 @@ class NERDetector:
             for k in kept:
                 if k["type"] != ent["type"]:
                     continue
-                overlap = max(0, min(k["end"], ent["end"]) - max(k["start"], ent["start"]))
-                if overlap > 0:
+                fully_contained = (
+                    k["start"] <= ent["start"]
+                    and ent["end"] <= k["end"]
+                )
+                if fully_contained:
                     is_duplicate = True
                     break
             if not is_duplicate:
