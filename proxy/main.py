@@ -27,7 +27,15 @@ from pathlib import Path
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import StreamingResponse
 
-from proxy import anthropic_adapter, config, detector, forward, masker, restorer
+from proxy import (
+    anthropic_adapter,
+    config,
+    detector,
+    forward,
+    masker,
+    restorer,
+    risk,
+)
 from proxy.mapping import MappingTable
 
 # Windows 主控台預設是 cp950，中文警告訊息可能會炸掉；統一轉成 utf-8
@@ -87,6 +95,17 @@ async def healthz() -> dict:
     }
 
 
+def _log_combination_risk(combination_risk: dict | None) -> None:
+    """達到門檻就印一行組合風險警示（兩條遮蔽路徑共用）。
+
+    刻意跟「已遮蔽 N 筆」分開印、也分開判斷：這兩件事沒有連動關係。一段
+    「35 歲女性資深工程師」可能一筆個資都沒遮到，卻是這包 payload 裡風險
+    最高的內容；反過來遮了 90 筆的請求也可能組合風險為零。
+    """
+    if combination_risk and risk.is_warning_worthy(combination_risk):
+        logger.warning(risk.format_warning(combination_risk))
+
+
 def _mask_request(path: str, body: bytes, table: MappingTable) -> tuple[bytes, float]:
     """遮蔽請求內容，回傳 (要送出的 body, 花費的毫秒數)。
 
@@ -104,7 +123,7 @@ def _mask_request(path: str, body: bytes, table: MappingTable) -> tuple[bytes, f
     started = time.perf_counter()
     try:
         payload = json.loads(body.decode("utf-8"))
-        counts = masker.mask_payload(payload, table)
+        counts, combination_risk = masker.mask_payload_with_risk(payload, table)
         if counts:
             body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
             # 只印型別與筆數，絕不印遮蔽掉的原始內容
@@ -113,6 +132,7 @@ def _mask_request(path: str, body: bytes, table: MappingTable) -> tuple[bytes, f
                 detector.format_warning(counts),
                 detector.CACHE.hit_rate * 100,
             )
+        _log_combination_risk(combination_risk)
     except json.JSONDecodeError:
         pass  # 不是 JSON（例如檔案上傳），本來就沒得掃
     except Exception as exc:  # noqa: BLE001 - 遮蔽失敗不能讓 agent 拿不到回覆
@@ -239,13 +259,14 @@ def _mask_anthropic_payload(payload: dict, table: MappingTable) -> tuple[dict, f
     """
     started = time.perf_counter()
     try:
-        counts = masker.mask_payload(payload, table)
+        counts, combination_risk = masker.mask_payload_with_risk(payload, table)
         if counts:
             logger.warning(
                 "已遮蔽（Claude Code）：%s｜快取命中率 %.0f%%",
                 detector.format_warning(counts),
                 detector.CACHE.hit_rate * 100,
             )
+        _log_combination_risk(combination_risk)
     except Exception as exc:  # noqa: BLE001 - 遮蔽失敗不能讓 agent 拿不到回覆
         logger.error("遮蔽失敗，該次請求未受保護：%s", exc)
     return payload, (time.perf_counter() - started) * 1000

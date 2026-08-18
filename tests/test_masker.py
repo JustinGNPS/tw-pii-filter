@@ -209,8 +209,12 @@ class Test語意層的型別:
 
 
 def test_預設跳過清單來自設定():
-    """預設值必須真的是 POSITION，不是靠測試自己傳參數才成立。"""
-    assert config.SKIP_TYPES == frozenset({"POSITION"})
+    """預設值必須真的是 POSITION + COMPANY，不是靠測試自己傳參數才成立。
+
+    `COMPANY` 是 08-14 的決定 13 加進來的（公司／店名不是個人識別資料，
+    遮掉會讓 agent 讀不懂程式碼）。詳見 `proxy/config.py` 的 `DEFAULT_SKIP_TYPES`。
+    """
+    assert config.SKIP_TYPES == frozenset({"POSITION", "COMPANY"})
     assert masker.resolve_skip_types(None) == config.SKIP_TYPES
 
 

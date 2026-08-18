@@ -60,13 +60,25 @@ READ_TIMEOUT = float(os.getenv("PROXY_READ_TIMEOUT", "600"))
 # 已與 D 在 PR #3 取得共識：預設不遮蔽，但保留設定空間（不同專案對「什麼算敏感」
 # 的認定可能不同，例如組織內部職稱表也可能是不想外流的資訊）。
 #
+# `COMPANY` 從 08-14 起也預設不遮（決定 13）：公司／店名不是個人識別資料，
+# 遮掉它會讓 agent 讀不懂程式碼（類別名稱、套件名稱常含公司名）。這也正面
+# 回應了 D 在 `core/ner/detector.py:24-25` 掛了 11 天的提問（「company 是否
+# 算目標 PII 屬政策問題，可考慮預設不遮蔽」）。
+#
+# **注意這個機制與底下的 `NER_ALLOW_TYPES` 意義不同**，不要混用：
+#   - 這裡（SKIP_TYPES）＝「偵測是對的，但政策上不遮」。span 仍然存在，
+#     仍然參與 Layer 4 仲裁，**也仍然計入組合風險分數** —— 因為 AI 真的
+#     看得到這段文字，它對重新識別的貢獻是真實的（見 docs/B_design.md 決定 12）。
+#   - `NER_ALLOW_TYPES` ＝「這個型別根本不可信，當作沒偵測到」。span 直接
+#     丟棄，不遮、不計分、連 log 都不出現。
+#
 # 設定方式：`.env` 或環境變數 `PII_SKIP_TYPES`，以逗號分隔，例如
 #     PII_SKIP_TYPES=POSITION,ORG
 # 設成空字串代表**什麼都不跳過**（連 position 也遮）。
-DEFAULT_SKIP_TYPES = "POSITION"
+DEFAULT_SKIP_TYPES = "POSITION,COMPANY"
 
 
-def _parse_skip_types(raw: str) -> frozenset[str]:
+def _parse_types(raw: str) -> frozenset[str]:
     """把逗號分隔的設定字串轉成正規化後的型別集合。
 
     正規化是必要的：使用者可能寫小寫的 `position`，而遮蔽時比對的是
@@ -78,7 +90,7 @@ def _parse_skip_types(raw: str) -> frozenset[str]:
 
 
 _skip_raw = os.getenv("PII_SKIP_TYPES")
-SKIP_TYPES = _parse_skip_types(
+SKIP_TYPES = _parse_types(
     DEFAULT_SKIP_TYPES if _skip_raw is None else _skip_raw
 )
 
@@ -90,6 +102,41 @@ SKIP_TYPES = _parse_skip_types(
 #
 # 設定方式：`.env` 或環境變數 `PII_ENABLE_NER=1`（或 `true`/`yes`，大小寫不拘）。
 ENABLE_NER = os.getenv("PII_ENABLE_NER", "").strip().lower() in ("1", "true", "yes")
+
+# 語意層採信的型別（白名單）---------------------------------------------------
+#
+# 語意層用的 `gyr66/bert-base-chinese-finetuned-ner` 是**通用領域**中文 NER
+# 模型，訓練標籤共 14 種（用 `python core/ner/get_model_labels.py` 查得）：
+#     QQ, address, book, company, email, game, government,
+#     mobile, movie, name, organization, position, scene, vx
+#
+# 其中大半跟個資無關（書名、電影、遊戲、場景），而且在我們的使用情境 ——
+# agent 送過來的**英文技術文字**（system prompt、程式碼、工具說明）—— 屬於
+# 模型訓練分布之外，產出的幾乎全是雜訊。08-14 用真實 Claude Code 請求實測，
+# 語意層在 Claude Code 的 system prompt 上判出：
+#     GAME x6        'here' / 'ollama' / '—' / 'MEMORY' / '`' / 'Environment\nYou'
+#     ORGANIZATION x2 'mistral' / '`'
+# 也就是說**一個反引號被當成 GAME 遮成佔位符送給上游**。這不是隱私問題
+# （那些本來就不是個資），是功能損害：agent 的系統提示被挖洞，行為會受影響。
+#
+# 因此改用白名單：只採信明確跟個人身分有關的型別，其餘一律當作沒偵測到。
+# 用白名單而不是把雜訊型別列進 `SKIP_TYPES` 黑名單，是因為黑名單要求我們
+# 預先知道模型的所有標籤 —— 而這個專案有 11 天的時間都以為只有 4 種
+# （`NAME`/`ADDRESS`/`POSITION`/`COMPANY`），直到今天才核對模型本身。
+# 白名單在日後換模型、模型改標籤集時都不會被新標籤偷襲。
+#
+# **只作用於語意層**：規則層那 8 種型別（TW_ID/TW_TAX/TW_NHI/TW_PHONE_M/
+# TW_PHONE_L/EMAIL/CREDIT_CARD/API_KEY）有正則與檢核碼驗證，不受這裡影響，
+# 一律照常偵測與遮蔽。
+#
+# 設定方式：`.env` 或環境變數 `PII_NER_ALLOW_TYPES`，以逗號分隔。
+# 設成空字串代表**全部採信**（回到改動前的行為，供比對／除錯用）。
+DEFAULT_NER_ALLOW_TYPES = "NAME,ADDRESS,POSITION,COMPANY"
+
+_ner_allow_raw = os.getenv("PII_NER_ALLOW_TYPES")
+NER_ALLOW_TYPES = _parse_types(
+    DEFAULT_NER_ALLOW_TYPES if _ner_allow_raw is None else _ner_allow_raw
+)
 
 # 對照表閒置逾時（秒）-------------------------------------------------------
 #
@@ -103,6 +150,19 @@ MAPPING_IDLE_TIMEOUT = float(
     os.getenv("PROXY_MAPPING_IDLE_TIMEOUT", str(DEFAULT_IDLE_TIMEOUT))
 )
 
+# 組合風險提示（Layer 3）是否啟用 --------------------------------------------
+#
+# 與語意層相反，這個**預設開啟**：`core.risk.combination_risk` 只用到標準
+# 函式庫的正則與集合運算，沒有任何額外依賴，成本遠低於規則層本身，沒有
+# 「怕拖慢、預設關掉」的理由。而且它只印 log、不動 payload，開著也不可能
+# 弄壞 agent。
+#
+# 設定方式：`.env` 或環境變數 `PII_ENABLE_RISK_WARNING=0` 可關閉
+# （demo 時想讓 log 保持乾淨、或只想展示遮蔽本身的效果時用）。
+ENABLE_RISK_WARNING = os.getenv(
+    "PII_ENABLE_RISK_WARNING", "1"
+).strip().lower() in ("1", "true", "yes")
+
 
 def startup_summary() -> str:
     """啟動時印的設定摘要 —— 只印變數名稱與 base URL，**不印金鑰內容**。"""
@@ -115,11 +175,16 @@ def startup_summary() -> str:
         if UPSTREAM_BASE_URL
         else "**未設定**（請在 .env 設 UPSTREAM_BASE_URL）"
     )
+    allowed = "、".join(sorted(NER_ALLOW_TYPES)) if NER_ALLOW_TYPES else "（全部採信）"
+    ner_status = "已啟用" if ENABLE_NER else "未啟用（僅規則層）"
+    if ENABLE_NER:
+        ner_status += f"，採信型別：{allowed}"
     return (
         f"上游 base URL：{base_url_status}\n"
         f"上游金鑰：{key_status}\n"
         f"預設模型：{DEFAULT_MODEL}\n"
         f"偵測到但不遮蔽的型別：{skipped}\n"
-        f"語意層（NER）：{'已啟用' if ENABLE_NER else '未啟用（僅規則層）'}\n"
+        f"語意層（NER）：{ner_status}\n"
+        f"組合風險提示：{'已啟用' if ENABLE_RISK_WARNING else '未啟用'}\n"
         f"對照表閒置逾時：{f'{MAPPING_IDLE_TIMEOUT:.0f} 秒' if MAPPING_IDLE_TIMEOUT else '停用'}"
     )

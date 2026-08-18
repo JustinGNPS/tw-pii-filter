@@ -63,11 +63,25 @@ Agent（Aider / Cline / Continue / Codex / OpenCode）
 順帶解掉一個撞號風險：`name` 與 `NAME` 若被當成兩個型別，兩邊都從 1 號開始發，
 會產生兩個 `[NAME_1]` 指向不同的人。
 
-### 偵測得到、但不遮蔽的型別
+### 兩個型別機制：「不採信」與「不遮蔽」不是同一件事
 
-語意層會回傳 `position`（客服／客戶／工程師這類職稱），信心分數往往很高，
-但職稱本身不是個資。遮掉它對隱私沒有幫助，卻會讓 agent 讀不懂上下文。
-預設跳過，可用 `PII_SKIP_TYPES` 調整（見下方環境變數表）。
+語意層的輸出經過**兩道**互相獨立的型別篩選，兩者意義不同，設定時不要混用：
+
+| | `PII_NER_ALLOW_TYPES`（白名單） | `PII_SKIP_TYPES`（跳過清單） |
+|---|---|---|
+| 意思 | 這個型別**根本不可信**，當作沒偵測到 | 偵測是對的，但**政策上不遮** |
+| 進 Layer 4 仲裁 | ❌ 送進 `detect_all()` 之前就丟掉 | ✅ |
+| 計入 log 筆數 | ❌ | ✅ |
+| 計入組合風險分數 | ❌ | ✅ |
+| 預設值 | `NAME,ADDRESS,POSITION,COMPANY` | `POSITION,COMPANY` |
+
+**`POSITION` / `COMPANY` 走的是第二種**：職稱、公司名不是個人識別資料，遮掉
+對隱私沒有幫助，卻會讓 agent 讀不懂上下文（程式碼裡的類別名稱、套件名稱常
+含公司名）。但它們**仍然要計入組合風險分數** —— AI 真的看得到這段文字，
+它對重新識別的貢獻是真實的。這也是為什麼它們留在白名單裡：若把它們排除在
+白名單外，風險分數會漏報。
+
+**雜訊型別走的是第一種**，理由見下一節。
 
 ### 還原涵蓋文字回覆與工具呼叫兩種路徑
 
@@ -82,6 +96,19 @@ Aider 這類 diff-edit 工具走這條）或 **function calling**（`delta.tool_
 `[TW_ID_1]` 這類佔位符——因為 OpenCode 用 function calling 編輯檔案，
 內容根本沒經過當時唯一會檢查的那個欄位。log 當下顯示「還原 0 筆」，
 這個訊號本身就是破案關鍵。詳見 `docs/B_design.md`「已知限制」一節。
+
+### 兩種 API 格式：chat completions 與 Responses API
+
+| agent | 端點 | 請求裡的文字在哪 | 串流事件 |
+|---|---|---|---|
+| Aider／OpenCode／Continue／Cline | `/v1/chat/completions` | `messages[]` | `choices[].delta.content`、`delta.tool_calls[].function.arguments` |
+| **Codex** | `/v1/responses` | 頂層 `instructions` + `input[]` **物件陣列**（`message` / `function_call` / `function_call_output`） | 頂層 `{"type": "response.*", "delta": ...}` |
+| Claude Code | `/v1/messages` | `system` + `messages[]` block 陣列 | Anthropic 事件（另有 `proxy/anthropic_adapter.py` 翻譯層） |
+
+Responses API 不需要協定翻譯（上游 AIR 直接支援），但**遮蔽與還原兩側都要
+另外認得它的欄位位置**——`extract_texts()` 與 `SSERestorer` 各自分流處理。
+agent 讀到的檔案內容在 `input[].output`，agent 要寫進檔案的內容在
+`response.function_call_arguments.delta`，這兩個是最關鍵的欄位。
 
 ### 語意層（D 的 NER）：預設關閉，選配開啟
 
@@ -104,6 +131,78 @@ Aider 這類 diff-edit 工具走這條）或 **function calling**（`delta.tool_
 core/ner/requirements.txt`）。遮蔽本身（`_mask_request`）已經用
 `asyncio.to_thread` 丟到背景執行緒跑，開啟語意層後也不會卡住 event loop
 上其他請求。
+
+### 組合風險提示（D 的 Layer 3）：只提示，不遮蔽
+
+遮蔽擋得住「字串本身就是識別碼」的東西，擋不住「沒有一個欄位是個資、組合
+起來卻指得到人」。例如
+`這位 35 歲的女性住在新竹市東區，是我們公司的資深後端工程師` —— 地址遮掉
+之後仍留下年齡、性別、職稱，範圍已經窄到只剩少數人。
+
+proxy 遮蔽時會順手呼叫 `core.risk.combination_risk` 評分，超過門檻就印一行：
+
+```
+WARNING 組合風險 0.70（高）：AGE、GENDER、POSITION 同時出現，即使明碼個資已遮蔽，仍可能指認到特定個人
+    · 「35歲」建議泛化為「35-39歲」
+    · 若非必要，建議省略性別資訊
+    · 職稱可保留，但建議避免同時透露服務公司名稱
+```
+
+**它只印 log，不會改動送出去的內容，也不會擋下請求** —— 要遮到什麼程度取決於
+使用者當下在做什麼任務，proxy 判斷不了（設計理由見 `docs/B_design.md` 決定 12）。
+
+評分依據是**遮蔽後**的內容，不是原文：已經被遮掉的型別不算殘餘風險，否則會
+虛報一個自己已經擋掉的洩漏。
+
+⚠️ **需要 `PII_ENABLE_NER=1` 才看得到效果**。準識別子裡 `ADDRESS`／`POSITION`／
+`COMPANY` 只有語意層抓得到，規則層那 8 個型別全都是直接識別碼、不算準識別子。
+語意層關閉時可貢獻分數的只剩 `AGE` + `GENDER` = 0.50，碰不到 0.6 的警告門檻。
+
+⚠️ **開啟語意層後，proxy 啟動後的第一個請求會等約 13 秒**（真實 Claude Code
+請求實測）。原因是 agent 的 system prompt 有兩、三萬字元，語意層推論成本正比
+於文字長度（約 0.36 ms／字元）。這是**一次性**的 —— 第 2 輪起 system prompt
+命中偵測快取，只剩 30〜50 ms，之後的成本只正比於新增內容。**demo 前先隨便送
+一個請求把快取暖起來**，否則第一次操作看起來像卡住。詳細數字見
+`docs/B_design.md`「已知限制 3」。
+
+不需要時用 `PII_ENABLE_RISK_WARNING=0` 關閉。
+
+### ⚠️ 語意層只採信白名單裡的型別
+
+語意層用的 `gyr66/bert-base-chinese-finetuned-ner` 是**通用領域**中文 NER
+模型，訓練標籤共 **14 種**（`python core/ner/get_model_labels.py` 可查）：
+
+```
+QQ, address, book, company, email, game, government,
+mobile, movie, name, organization, position, scene, vx
+```
+
+其中大半跟個資無關（書名、電影、遊戲、場景、QQ／微信帳號）。而 agent 送來的
+內容大量是**英文技術文字**（system prompt、程式碼、工具說明），落在模型訓練
+分布之外，產出的幾乎全是雜訊。用真實 Claude Code 請求（36,428 字元）實測，
+語意層在 Claude Code 自己的 system prompt 上判出：
+
+```
+GAME         x6   'here'  'ollama'  '—'  'MEMORY'  '`'  'Environment\nYou'
+ORGANIZATION x2   'mistral'  '`'
+```
+
+**一個反引號被判成 `GAME`、遮成佔位符送給上游。** 這不是隱私問題（那些本來
+就不是個資），是**功能損害**：agent 的系統提示被挖洞，行為會受影響；同時
+log 的「偵測到 N 筆敏感資訊」也被灌水，使用者無從得知其中幾筆是真的。
+
+因此語意層改用**白名單**（`PII_NER_ALLOW_TYPES`，預設
+`NAME,ADDRESS,POSITION,COMPANY`），白名單外的型別直接丟棄。用白名單而不是
+把雜訊列進 `PII_SKIP_TYPES` 黑名單，是因為黑名單要求我們預先知道模型的所有
+標籤 —— 而這個專案有 11 天都以為只有 4 種，直到 08-14 才去核對模型本身。
+白名單在日後換模型時不會被新標籤偷襲。
+
+**規則層不受影響**：那 8 種型別有正則與檢核碼驗證，照常偵測與遮蔽。
+
+**已知限制：白名單擋不掉「白名單型別內部」的誤判。** 同一份實測裡，語意層
+把英文字碎片 `'lly'` 判成 `NAME`（信心 0.99），這筆仍然會被遮。白名單把該次
+9 筆雜訊降到 1 筆，但沒有根治 —— 根因是拿中文通用模型去掃英文技術文字，
+要真正解決得換模型或加語言判斷，兩者都超出載體端的範圍。
 
 ### 已知取捨
 
@@ -141,12 +240,17 @@ python -m venv .venv
 | 預設模型 | `DEFAULT_MODEL`、`OPENAI_MODEL`、`AIR_MODEL` | `gpt-4.1-mini` |
 | 連線逾時（秒） | `PROXY_CONNECT_TIMEOUT` | `10` |
 | 讀取逾時（秒） | `PROXY_READ_TIMEOUT` | `600` |
-| 不遮蔽的型別（逗號分隔） | `PII_SKIP_TYPES` | `POSITION` |
+| 不遮蔽的型別（逗號分隔） | `PII_SKIP_TYPES` | `POSITION,COMPANY` |
+| 語意層採信的型別（逗號分隔） | `PII_NER_ALLOW_TYPES` | `NAME,ADDRESS,POSITION,COMPANY` |
 | 啟用語意層（NER） | `PII_ENABLE_NER` | 關閉（僅規則層） |
+| 啟用組合風險提示 | `PII_ENABLE_RISK_WARNING` | 開啟 |
 | 對照表閒置逾時（秒，`0` 代表停用） | `PROXY_MAPPING_IDLE_TIMEOUT` | `1800`（30 分鐘） |
 
-`PII_SKIP_TYPES` 設成空字串代表**什麼都不跳過**（連職稱也遮）。
-大小寫都吃，內部會做同一套正規化。啟動時會把實際生效的清單印出來。
+`PII_SKIP_TYPES` 設成空字串代表**什麼都不跳過**（連職稱也遮）；
+`PII_NER_ALLOW_TYPES` 設成空字串代表**語意層全部採信**（回到白名單前的行為，
+供比對／除錯用）。兩者大小寫都吃，內部會做同一套正規化。啟動時會把實際生效的
+清單印出來。兩個機制的差別見上面「兩個型別機制」一節 —— **不要用 `SKIP_TYPES`
+去擋雜訊型別**，那樣它們仍會被算進 log 筆數與組合風險分數。
 
 **建議用 `UPSTREAM_API_KEY`** —— `OPENAI_API_KEY` 會與 agent 自己的設定撞名。
 真金鑰只存在 proxy 這一側，agent 那邊填假的即可。

@@ -105,7 +105,7 @@ def _chinese_number_to_int(cn: str) -> Optional[int]:
         return _CN_DIGIT_MAP[cn]
     if "十" in cn:
         left, _, right = cn.partition("十")
-        tens = _CN_DIGIT_MAP.get(left, 1) if left else 1
+        tens = _CN_DIGIT_MAP.get(left, 1) if left else 1  # 「十五」的「十」前面沒數字，視為 1
         ones = _CN_DIGIT_MAP.get(right, 0) if right else 0
         return tens * 10 + ones
     return None
@@ -222,6 +222,22 @@ def compute_combination_risk(text: str, spans: Optional[List[Dict]] = None) -> D
         spans: 已知的偵測結果（例如 detect_all() 的輸出），用來抓取
             POSITION/COMPANY/ADDRESS 這類準識別子。若為 None，只會用
             內部的 AGE/GENDER 偵測掃描文字本身。
+
+    重要：text 與 spans 必須是同一份「視角」下的內容，兩者要互相對應——
+    這個函式評估的是「你給的這份 text，實際看得到多少準識別子」，不是
+    「這段內容理論上曾經含有什麼」。因此內部才會直接對 text 本身做
+    AGE/GENDER 正則掃描，而不是只信任 spans。
+
+    兩種合法用法（B 在 proxy 端曾提出這個疑問，這裡明確記錄）：
+        - text=原文, spans=原文的完整偵測結果
+          → 回答「這段內容本身潛在風險多高」（適合分析語料、評估資料集敏感度）
+        - text=遮蔽後的文字, spans=沒被遮掉、仍留在文字裡的準識別子（殘餘 spans）
+          → 回答「送出去的內容，遮蔽完之後還剩多少風險」（適合載體端警告使用者，
+            proxy／擴充都該用這個版本，避免對已經被遮蔽掉的資訊重複計分而虛報）
+
+    一種錯誤用法：
+        - text=遮蔽後文字, spans=原文的完整偵測結果（兩者視角不一致，
+          會把已經遮掉的準識別子也算進分數，虛報風險）
 
     Returns:
         Dict: {
