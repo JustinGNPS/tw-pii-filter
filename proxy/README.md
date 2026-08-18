@@ -83,6 +83,19 @@ Aider 這類 diff-edit 工具走這條）或 **function calling**（`delta.tool_
 內容根本沒經過當時唯一會檢查的那個欄位。log 當下顯示「還原 0 筆」，
 這個訊號本身就是破案關鍵。詳見 `docs/B_design.md`「已知限制」一節。
 
+### 兩種 API 格式：chat completions 與 Responses API
+
+| agent | 端點 | 請求裡的文字在哪 | 串流事件 |
+|---|---|---|---|
+| Aider／OpenCode／Continue／Cline | `/v1/chat/completions` | `messages[]` | `choices[].delta.content`、`delta.tool_calls[].function.arguments` |
+| **Codex** | `/v1/responses` | 頂層 `instructions` + `input[]` **物件陣列**（`message` / `function_call` / `function_call_output`） | 頂層 `{"type": "response.*", "delta": ...}` |
+| Claude Code | `/v1/messages` | `system` + `messages[]` block 陣列 | Anthropic 事件（另有 `proxy/anthropic_adapter.py` 翻譯層） |
+
+Responses API 不需要協定翻譯（上游 AIR 直接支援），但**遮蔽與還原兩側都要
+另外認得它的欄位位置**——`extract_texts()` 與 `SSERestorer` 各自分流處理。
+agent 讀到的檔案內容在 `input[].output`，agent 要寫進檔案的內容在
+`response.function_call_arguments.delta`，這兩個是最關鍵的欄位。
+
 ### 語意層（D 的 NER）：預設關閉，選配開啟
 
 `proxy/detector.py` 已接上 `core.ner.detect_ner()`，會把語意層結果當

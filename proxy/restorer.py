@@ -140,14 +140,20 @@ class SSERestorer:
        工具呼叫在串流），因此每個 index 各自維護一個 `StreamRestorer`，
        不能共用一個 buffer，否則不同工具呼叫的內容會互相插斷、拼錯。
 
-    目前處理 OpenAI chat completions 的串流格式（`choices[].delta.content`、
-    `choices[].delta.tool_calls[].function.arguments`）。其他協定
-    （如 Anthropic）欄位位置不同，屆時在此擴充即可。
+    支援兩種串流格式：
+
+    - **OpenAI chat completions**：`choices[].delta.content`、
+      `choices[].delta.tool_calls[].function.arguments`
+    - **OpenAI Responses API**（Codex CLI 走這條）：事件形狀完全不同，
+      見 `_restore_responses_event()`
+
+    Anthropic 的串流格式由 `proxy/anthropic_adapter.py` 另外處理。
     """
 
     _EVENT_SEPARATOR = "\n\n"
     _DATA_PREFIX = "data: "
     _DONE = "[DONE]"
+    _RESPONSES_PREFIX = "response."
 
     def __init__(self, table: MappingTable) -> None:
         self._table = table
@@ -156,17 +162,29 @@ class SSERestorer:
         self._decoder = codecs.getincrementaldecoder("utf-8")()
         self._pending = ""  # 尚未收完的事件
         self._template: dict | None = None  # 最後一個事件，收尾時當範本用
+        # Responses API：每個 output item 各自一個 buffer 與範本
+        self._responses_texts: dict[object, StreamRestorer] = {}
+        self._responses_templates: dict[object, dict] = {}
+        # 完整（非增量）事件上直接替換掉的筆數，不經過任何 StreamRestorer
+        self._whole_restored = 0
+        self._whole_unknown = 0
 
     @property
     def restored(self) -> int:
-        return self._text.restored + sum(
-            t.restored for t in self._tool_call_texts.values()
+        return (
+            self._text.restored
+            + sum(t.restored for t in self._tool_call_texts.values())
+            + sum(t.restored for t in self._responses_texts.values())
+            + self._whole_restored
         )
 
     @property
     def unknown(self) -> int:
-        return self._text.unknown + sum(
-            t.unknown for t in self._tool_call_texts.values()
+        return (
+            self._text.unknown
+            + sum(t.unknown for t in self._tool_call_texts.values())
+            + sum(t.unknown for t in self._responses_texts.values())
+            + self._whole_unknown
         )
 
     def feed(self, chunk: bytes) -> bytes:
@@ -208,6 +226,27 @@ class SSERestorer:
             leftover = self._tool_call_texts[index].flush()
             if leftover:
                 events.append(self._as_tool_call_event(index, leftover))
+        events.extend(self._flush_responses_leftovers())
+        return events
+
+    def _flush_responses_leftovers(self) -> list[str]:
+        """把 Responses API 各個 output item buffer 裡殘留的內容包回事件。
+
+        沿用該 item 最後一個事件當範本、只換掉 `delta`——增量事件除了 `delta`
+        還帶著 `item_id`／`output_index`／`content_index`，agent 端要靠這些欄位
+        把片段接回正確的 output item，隨便自己造一個事件會接錯位置。
+        """
+        events = []
+        for key in list(self._responses_texts):
+            leftover = self._responses_texts[key].flush()
+            if not leftover:
+                continue
+            template = self._responses_templates.get(key)
+            if template is None:
+                continue
+            event = json.loads(json.dumps(template))  # 深拷貝，不動到範本
+            event["delta"] = leftover
+            events.append(self._DATA_PREFIX + json.dumps(event, ensure_ascii=False))
         return events
 
     def _process(self, block: str) -> str:
@@ -234,16 +273,41 @@ class SSERestorer:
                 lines.append(line)  # 不是 JSON 就別動它
                 continue
 
+            if self._is_responses_terminal(obj):
+                # 某個 output item 結束了，殘留的半個佔位符必須在結束事件
+                # **之前**送出，否則靠累加 delta 的 agent 會少收尾巴
+                for event in self._flush_responses_leftovers():
+                    lines.append(event)
+                    lines.append("")
+
             self._template = obj
             self._restore_in_place(obj)
             lines.append(self._DATA_PREFIX + json.dumps(obj, ensure_ascii=False))
 
         return "\n".join(lines)
 
+    def _is_responses_terminal(self, obj: dict) -> bool:
+        """這個事件是不是 Responses API 的結束事件（`*.done` / `response.completed`）。"""
+        event_type = obj.get("type")
+        if not isinstance(event_type, str) or not event_type.startswith(
+            self._RESPONSES_PREFIX
+        ):
+            return False
+        return event_type.endswith(".done") or event_type.endswith(".completed")
+
     def _restore_in_place(self, obj: dict) -> None:
-        """把事件裡每個 `delta.content` 與 `delta.tool_calls[].function.arguments`
-        換成還原後（可能較短）的文字。
+        """把事件裡的佔位符換成還原後（可能較短）的文字。
+
+        依事件形狀分流：Responses API 的事件有頂層 `type: "response.*"`，
+        chat completions 沒有。
         """
+        event_type = obj.get("type")
+        if isinstance(event_type, str) and event_type.startswith(
+            self._RESPONSES_PREFIX
+        ):
+            self._restore_responses_event(obj)
+            return
+
         choices = obj.get("choices")
         if not isinstance(choices, list):
             return
@@ -280,9 +344,70 @@ class SSERestorer:
             buffer = self._tool_call_texts.setdefault(index, StreamRestorer(self._table))
             function["arguments"] = buffer.feed(arguments)
 
+    def _restore_responses_event(self, obj: dict) -> None:
+        """還原 Responses API（Codex CLI）的串流事件。
+
+        事件形狀跟 chat completions 完全不同——沒有 `choices`，型態放在頂層
+        `type`，內容放在頂層 `delta`：
+
+        ```
+        data: {"type":"response.output_text.delta","item_id":"msg_1","delta":"[TW"}
+
+        data: {"type":"response.function_call_arguments.delta","item_id":"fc_1","delta":"..."}
+        ```
+
+        兩種 `delta` 都必須還原，理由跟 chat completions 那邊一模一樣：
+        `output_text` 是使用者看到的回覆，`function_call_arguments` 是 agent
+        **實際要寫進檔案的內容**——後者漏掉的話，佔位符會原封不動被寫進使用者
+        的程式碼（OpenCode 那次踩過的坑，見本類別 docstring 第 3 點）。
+
+        **每個 output item 各自一個 buffer**：一個回覆裡可能同時串流多個 item
+        （文字 + 好幾個工具呼叫），共用 buffer 會讓不同 item 的內容互相插斷。
+
+        非增量事件（`*.done`、`response.completed`）帶的是**完整**字串，不會有
+        佔位符被切斷的問題，因此整包遞迴替換就好，不必進 buffer——而且必須處理：
+        Codex 是從 `response.completed` 取最終結果的，只還原 delta 會讓最終結果
+        仍然帶著佔位符。
+        """
+        delta = obj.get("delta")
+        if isinstance(delta, str):
+            key = self._responses_key(obj)
+            buffer = self._responses_texts.setdefault(key, StreamRestorer(self._table))
+            self._responses_templates[key] = obj
+            obj["delta"] = buffer.feed(delta)
+            return
+
+        self._restore_whole(obj)
+
+    @staticmethod
+    def _responses_key(obj: dict) -> object:
+        """這個增量事件屬於哪一個 output item。"""
+        for field in ("item_id", "output_index", "content_index"):
+            value = obj.get(field)
+            if isinstance(value, (str, int)):
+                return value
+        return "default"
+
+    def _restore_whole(self, node: object) -> object:
+        """就地遞迴還原任意巢狀結構裡的每個字串（供完整、非增量的事件使用）。"""
+        if isinstance(node, str):
+            text, restored, unknown = restore_text(node, self._table)
+            self._whole_restored += restored
+            self._whole_unknown += unknown
+            return text
+        if isinstance(node, dict):
+            for key, value in node.items():
+                node[key] = self._restore_whole(value)
+        elif isinstance(node, list):
+            for i, value in enumerate(node):
+                node[i] = self._restore_whole(value)
+        return node
+
     def _as_content_event(self, content: str) -> str:
         """把殘留文字包成一個 SSE 事件，沿用最後一個事件的外框。"""
-        if self._template is None:
+        if self._template is None or not isinstance(self._template.get("choices"), list):
+            # 範本不是 chat completions 的形狀（例如整條串流都是 Responses
+            # 事件），硬套會吐出一個殘缺的事件，寧可不送
             return ""
         obj = json.loads(json.dumps(self._template))  # 深拷貝，不動到範本
         choices = obj.get("choices")

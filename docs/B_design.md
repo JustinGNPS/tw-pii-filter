@@ -566,7 +566,7 @@ MITM 必須在使用者機器安裝一張根憑證。那張憑證一旦存在，
 | OpenCode | `opencode.json` 自訂 provider（`@ai-sdk/openai-compatible`） | function calling | **已實測通過**（過程中挖出並修好還原機制的一個洞，見下） |
 | Continue | `~/.continue/config.yaml` 自訂 `provider: openai` + `apiBase` | function calling | **已實測通過**（再次驗證 tool_calls 還原修復不是只對 OpenCode 有效） |
 | Cline | GUI 設定選 **OpenAI Compatible**，填 Base URL/API Key/Model | function calling | **已實測通過**（第三款驗證同一個修復） |
-| Codex | 設定檔自訂 provider | 待確認 | 協定略有差異，`detector.py` 可能需擴充；測之前先確認走的是 `tool_calls` 還是別的欄位結構 |
+| Codex | `config.toml` 自訂 provider（`wire_api = "responses"`） | **Responses API**（`POST /v1/responses`，欄位結構完全不同） | **已實測通過**（遮蔽與還原兩側原本都靜默失效，見下；agent 主動寫檔那條路徑只有單元測試涵蓋） |
 | Claude Code | `ANTHROPIC_BASE_URL` | Anthropic Messages API（欄位結構完全不同，另有協定翻譯層） | **已實測通過**（純文字對話 + 工具呼叫，含真串流；圖片/文件附件尚未支援，見下） |
 | **Cursor** | — | 廠商代管後端，無自訂位址欄位 | **不支援**（見上「BYOK vs. 代管帳號」） |
 
@@ -648,6 +648,42 @@ SSE，簡化版）、`AnthropicStreamTranslator`（真串流版，邊收 AIR 的
 mock 只會回你安排好的回覆，不會告訴你「你送出去的請求，上游願不願意
 收」，這個 bug 是真的打 AIR 才浮現的，也是後續加新 agent／新上游時要
 記得的教訓：協定翻譯層寫完一定要跑一次真實環境。
+
+### Codex：不用翻譯協定，但兩側都靜默失效了
+
+Codex CLI 走 **Responses API**（`POST /v1/responses`）。好消息是**上游 AIR
+支援這個端點**（回 200），proxy 的萬用路由直接轉發就通，不像 Claude Code 那次
+要寫一整層協定翻譯。壞消息是「連得上」跟「保護得到」是兩回事——**遮蔽與還原
+兩側都對這個格式完全無效，而且沒有任何錯誤訊息**。
+
+**請求側**：真實請求 47,497 字元，`extract_texts()` 抓到 **0 個欄位、0 字元**。
+
+| 欄位 | 原本為什麼漏掉 |
+|---|---|
+| `instructions`（21,026 字元的系統提示） | 根本不在掃描範圍內 |
+| `input[].content[].text`（對話訊息） | `input` 的處理是為 embeddings 寫的，只認字串／字串陣列；這裡是**物件陣列**，`isinstance(item, str)` 一律 False，整段靜默跳過 |
+| `input[].arguments`（工具呼叫參數） | 同上 |
+| `input[].output`（工具執行結果，**agent 讀到的檔案內容在這裡**） | 同上 |
+
+**回覆側**：`SSERestorer` 只認 `choices[].delta.content`，而 Responses 的事件是
+頂層 `{"type": "response.*", "delta": ...}`，**一筆都沒還原到**。其中
+`response.function_call_arguments.delta` 是 agent 實際要寫進檔案的內容——漏掉
+就是把佔位符寫進使用者的程式碼，跟 OpenCode 那次是同一個坑的不同外殼。另外
+`response.completed` 這類事件帶的是完整最終結果，Codex 從那裡取結果，因此
+只還原 `delta` 不夠，完整事件也要整包還原。
+
+**三次踩到同一類坑，這次把判準寫下來**：OpenCode 是「還原 0 筆」、Claude Code
+早期是「`tool_use.input` 沒重掃」、Codex 是「偵測 0 筆」。共同點是
+**log 看起來完全正常**——「偵測到 0 筆」跟「這次剛好沒個資」在畫面上長得一樣。
+所以新增 agent 支援時的驗收條件不是「proxy 沒報錯」，而是**拿真實 capture 確認
+「抓到的字元數 > 0」，並且用一個「AI 答錯就代表它看到真值」的問題交叉驗證**
+（實測反例：問「`A123456789` 有幾個字元」，答 10 就是看到真值，遮蔽後應該是
+9 個字元的 `[TW_ID_1]`）。
+
+**Codex 同時具備兩種模式，強化了限制 2 的論述**：Codex 預設用 ChatGPT 帳號登入
+（廠商代管後端，攔不到），只有自訂 provider（BYOK）模式才攔得下來。這比 Cursor
+更有說服力——**同一個工具**、同一套程式碼，差別只在認證方式。這證明判準不是
+「哪個廠牌的 agent」，而是「流量走不走得到你指定的位址」。
 
 ---
 
