@@ -31,3 +31,18 @@
 - Node.js 18+
 - 所有檔案讀寫明確指定 `encoding="utf-8"`
 - 套件版本鎖死，不擅自升級
+
+上游 LLM 端點與金鑰放在 repo 根目錄的 `.env`（不進 git），
+`UPSTREAM_BASE_URL` 為必填、程式沒有預設值。詳見 [proxy/README.md](proxy/README.md)。
+
+## 測試資料
+
+`data/synthetic_pii/` 只保留**產生器**，產生出來的合成個資不進 git ——
+那些身分證字號 checksum 驗得過、格式與真號無異，不適合放在公開 repo 上。
+需要時照 [data/synthetic_pii/README.md](data/synthetic_pii/README.md) 跑一次即可重現同一批資料。
+
+**本專案不含、也不接受任何真實個資。**
+
+## 授權
+
+[MIT](LICENSE)

@@ -136,7 +136,7 @@ python -m venv .venv
 
 | 設定 | 接受的變數名稱（依序） | 預設值 |
 |---|---|---|
-| 上游 base URL | `UPSTREAM_BASE_URL`、`OPENAI_BASE_URL`、`OPENAI_API_BASE`、`AIR_BASE_URL` | `https://air.cgu.edu.tw/cgullmapi/v1` |
+| 上游 base URL | `UPSTREAM_BASE_URL`、`OPENAI_BASE_URL`、`OPENAI_API_BASE`、`AIR_BASE_URL` | 無（**必填**，例：`https://<your-llm-gateway>/v1`） |
 | 上游金鑰 | `UPSTREAM_API_KEY`、`OPENAI_API_KEY`、`AIR_API_KEY`、`API_KEY` | 無（未設定會轉發失敗） |
 | 預設模型 | `DEFAULT_MODEL`、`OPENAI_MODEL`、`AIR_MODEL` | `gpt-4.1-mini` |
 | 連線逾時（秒） | `PROXY_CONNECT_TIMEOUT` | `10` |

@@ -29,9 +29,10 @@ def _env(names: tuple[str, ...], default: str = "") -> tuple[str, str]:
     return default, ""
 
 
+# 上游 base URL 沒有預設值：要用哪個 LLM 端點屬於部署設定，寫死在程式裡
+# 等於把自己的上游位址公開出去，所以一律由 `.env` 指定（範例見 proxy/README.md）。
 UPSTREAM_BASE_URL, UPSTREAM_BASE_URL_ENV = _env(
     ("UPSTREAM_BASE_URL", "OPENAI_BASE_URL", "OPENAI_API_BASE", "AIR_BASE_URL"),
-    "https://air.cgu.edu.tw/cgullmapi/v1",
 )
 
 UPSTREAM_API_KEY, UPSTREAM_API_KEY_ENV = _env(
@@ -109,8 +110,13 @@ def startup_summary() -> str:
         f"已載入（來自 {UPSTREAM_API_KEY_ENV}）" if UPSTREAM_API_KEY else "**未設定**"
     )
     skipped = "、".join(sorted(SKIP_TYPES)) if SKIP_TYPES else "（無）"
+    base_url_status = (
+        UPSTREAM_BASE_URL
+        if UPSTREAM_BASE_URL
+        else "**未設定**（請在 .env 設 UPSTREAM_BASE_URL）"
+    )
     return (
-        f"上游 base URL：{UPSTREAM_BASE_URL}\n"
+        f"上游 base URL：{base_url_status}\n"
         f"上游金鑰：{key_status}\n"
         f"預設模型：{DEFAULT_MODEL}\n"
         f"偵測到但不遮蔽的型別：{skipped}\n"
