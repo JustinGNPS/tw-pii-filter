@@ -149,6 +149,19 @@ MAPPING_IDLE_TIMEOUT = float(
     os.getenv("PROXY_MAPPING_IDLE_TIMEOUT", str(DEFAULT_IDLE_TIMEOUT))
 )
 
+# 組合風險提示（Layer 3）是否啟用 --------------------------------------------
+#
+# 與語意層相反，這個**預設開啟**：`core.risk.combination_risk` 只用到標準
+# 函式庫的正則與集合運算，沒有任何額外依賴，成本遠低於規則層本身，沒有
+# 「怕拖慢、預設關掉」的理由。而且它只印 log、不動 payload，開著也不可能
+# 弄壞 agent。
+#
+# 設定方式：`.env` 或環境變數 `PII_ENABLE_RISK_WARNING=0` 可關閉
+# （demo 時想讓 log 保持乾淨、或只想展示遮蔽本身的效果時用）。
+ENABLE_RISK_WARNING = os.getenv(
+    "PII_ENABLE_RISK_WARNING", "1"
+).strip().lower() in ("1", "true", "yes")
+
 
 def startup_summary() -> str:
     """啟動時印的設定摘要 —— 只印變數名稱與 base URL，**不印金鑰內容**。"""
@@ -166,5 +179,6 @@ def startup_summary() -> str:
         f"預設模型：{DEFAULT_MODEL}\n"
         f"偵測到但不遮蔽的型別：{skipped}\n"
         f"語意層（NER）：{ner_status}\n"
+        f"組合風險提示：{'已啟用' if ENABLE_RISK_WARNING else '未啟用'}\n"
         f"對照表閒置逾時：{f'{MAPPING_IDLE_TIMEOUT:.0f} 秒' if MAPPING_IDLE_TIMEOUT else '停用'}"
     )

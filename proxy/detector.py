@@ -130,6 +130,48 @@ def _extract_strings(value: Any, base: Path) -> list[tuple[Path, str]]:
     return found
 
 
+def _extract_from_responses_item(item: Any, base: Path) -> list[tuple[Path, str]]:
+    """從 Responses API（`POST /v1/responses`）`input` 陣列的單一項目取出文字。
+
+    Codex CLI 走的是這個端點，payload 形狀跟 Chat Completions 完全不同——
+    `input` 不是字串陣列而是**物件陣列**，實測抓到三種型態：
+
+    | `type` | 文字在哪 | 是什麼 |
+    |---|---|---|
+    | `message` | `content[].text` | 對話訊息（block 的 `type` 是 `input_text`／`output_text`）|
+    | `function_call` | `arguments` | 工具呼叫參數（JSON 字串）|
+    | `function_call_output` | `output` | 工具執行結果——**agent 讀到的檔案內容在這裡** |
+
+    後兩者跟 Anthropic 的 `tool_use.input`／`tool_result` 是同一個教訓：agent
+    每輪重送整段對話歷史，還原過的真值會**再次**出現在下一輪請求裡，所以這兩個
+    欄位每輪都必須重新掃描，不能只掃最新的使用者訊息。
+
+    **刻意不檢查 `type` 字串**，只看欄位在不在——理由同
+    `_extract_from_block_list()`：Codex 改版時多半是新增項目型態，只要文字仍然
+    放在 `content`／`arguments`／`output`，這裡就還吃得下，不會靜默漏掃。
+    """
+    found: list[tuple[Path, str]] = []
+    if not isinstance(item, dict):
+        return found
+
+    content = item.get("content")
+    if isinstance(content, str):
+        found.append((base + ("content",), content))
+    elif isinstance(content, list):
+        found.extend(_extract_from_block_list(content, base + ("content",)))
+
+    for key in ("arguments", "output"):
+        value = item.get(key)
+        if isinstance(value, str):
+            found.append((base + (key,), value))
+        elif isinstance(value, list):
+            # 實測到的 `output` 都是字串，但規格允許 block 陣列（例如工具回傳
+            # 多段內容）。多這一行，之後 Codex 換形狀時不會又變成靜默漏掃。
+            found.extend(_extract_from_block_list(value, base + (key,)))
+
+    return found
+
+
 def _extract_from_message(message: Any, base: Path) -> list[tuple[Path, str]]:
     """從單一 message 取出所有文字欄位。"""
     found: list[tuple[Path, str]] = []
@@ -187,9 +229,17 @@ def extract_texts(payload: Any) -> list[tuple[Path, str]]:
     - `messages[i].content`（字串或多模態 parts）
     - `messages[i].tool_calls[j].function.arguments`
     - `prompt`（舊版 completions，字串或字串陣列）
-    - `input`（embeddings，字串或字串陣列）
+    - `input`（embeddings 的字串／字串陣列，**以及 Responses API 的物件陣列**，
+      見 `_extract_from_responses_item()`）
     - `system`（Anthropic Messages API 專用欄位，字串或 block 陣列；
       OpenAI 格式的請求不會有這個欄位，此處新增不影響既有行為）
+    - `instructions`（Responses API 專用的系統提示欄位）
+
+    **這個函式漏掉一個欄位的後果是「靜默不遮蔽」**——真值原樣送給雲端，而 log
+    只會顯示「偵測到 0 筆」，看起來跟「這次剛好沒個資」一模一樣。Codex 的
+    `instructions`／`input` 物件陣列就是這樣漏了整整一版（見
+    `docs/B_design.md`）。新增 agent 支援時，永遠要拿真實 capture 驗證
+    「抓到的字元數 > 0」，不能只看 proxy 沒報錯。
     """
     found: list[tuple[Path, str]] = []
     if not isinstance(payload, dict):
@@ -206,6 +256,12 @@ def extract_texts(payload: Any) -> list[tuple[Path, str]]:
     elif isinstance(system, list):
         found.extend(_extract_from_block_list(system, ("system",)))
 
+    # Responses API 的系統提示欄位（Codex 實測 21,026 字元的系統提示就放這裡）。
+    # Chat Completions／Anthropic 格式的請求沒有這個欄位，新增不影響既有行為。
+    instructions = payload.get("instructions")
+    if isinstance(instructions, str):
+        found.append((("instructions",), instructions))
+
     for key in ("prompt", "input"):
         value = payload.get(key)
         if isinstance(value, str):
@@ -213,7 +269,12 @@ def extract_texts(payload: Any) -> list[tuple[Path, str]]:
         elif isinstance(value, list):
             for i, item in enumerate(value):
                 if isinstance(item, str):
+                    # embeddings 的字串陣列（本欄位最早就是為它寫的）
                     found.append(((key, i), item))
+                else:
+                    # Responses API 的物件陣列（Codex）。`prompt` 實務上不會是
+                    # 物件陣列，但兩個欄位共用同一段邏輯不會有副作用。
+                    found.extend(_extract_from_responses_item(item, (key, i)))
 
     return found
 
