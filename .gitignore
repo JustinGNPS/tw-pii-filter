@@ -8,6 +8,19 @@ secrets/
 *_real_data*
 real_data/
 
+# 合成測試語料的「產物」不進 git。號碼雖是隨機產生，但 checksum 驗得過、
+# 格式與真號無異，放在公開 repo 上等同散布一份可直接使用的身分證號清單，
+# 且不排除隨機撞到真人號碼。產生器本身有進 git，要用的人自己重現一份即可
+# （固定 seed，輸出與原本 bit-for-bit 相同，作法見 data/synthetic_pii/README.md）。
+data/synthetic_pii/synthetic_pii.csv
+data/synthetic_pii/synthetic_pii.json
+data/synthetic_pii/fake_code_samples/
+data/synthetic_pii/business_name_samples.json
+data/synthetic_pii/output/
+
+# B 的個人進度筆記（本機檔案，給組員與教授看的紀錄，不進 git）
+docs/B_progress.md
+
 # ===== Python =====
 .venv/
 venv/
