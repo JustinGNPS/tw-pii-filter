@@ -19,6 +19,7 @@ from typing import Any
 from core.rules import detect_all as _detect_all
 from proxy import config
 from proxy.cache import DetectionCache
+from proxy.mapping import normalize_type
 
 # JSON 路徑：dict 的 key 用 str，list 的 index 用 int
 Path = tuple[Any, ...]
@@ -43,7 +44,31 @@ def _extra_spans(text: str) -> list[dict] | None:
         return None
     from core.ner.detector import detect_ner
 
-    return detect_ner(text)
+    return _keep_allowed_types(detect_ner(text))
+
+
+def _keep_allowed_types(spans: list[dict] | None) -> list[dict] | None:
+    """只留下 `config.NER_ALLOW_TYPES` 裡的語意層 spans，其餘直接丟棄。
+
+    語意層用的是**通用領域**中文 NER 模型（14 種標籤，含書名／電影／遊戲／
+    場景），拿去掃 agent 送來的英文技術文字時會產生大量雜訊 —— 實測 Claude
+    Code 的 system prompt 被判出 `GAME`（連一個反引號都算）與 `ORGANIZATION`。
+    理由與白名單的完整實測數據見 `proxy/config.py` 的 `NER_ALLOW_TYPES` 一節。
+
+    **為什麼在這裡丟、而不是在遮蔽時跳過**：這裡是 `detect_all(extra_spans=...)`
+    的**上游**，丟掉的 span 從一開始就不存在，因此
+      - 不會參與 A 的 Layer 4 重疊仲裁（雜訊 span 不會有機會擠掉真正的規則層結果）
+      - 不會被算進 log 的「偵測到 N 筆敏感資訊」（否則數字會被雜訊灌水，
+        使用者無從得知其中幾筆是真的）
+      - 不會被算進 Layer 3 組合風險分數
+    這三件事都是「當作沒偵測到」的應有語意。想要「偵測到但不遮蔽」（例如
+    `POSITION`）請用 `config.SKIP_TYPES`，兩者差別見 `proxy/config.py`。
+
+    空的白名單代表**全部採信**（回到改動前的行為），供比對與除錯用。
+    """
+    if spans is None or not config.NER_ALLOW_TYPES:
+        return spans
+    return [s for s in spans if normalize_type(s.get("type")) in config.NER_ALLOW_TYPES]
 
 
 def detect(text: str, cache: DetectionCache | None = None) -> dict:
