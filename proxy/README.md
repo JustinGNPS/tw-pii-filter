@@ -246,6 +246,14 @@ python -m venv .venv
 | 啟用組合風險提示 | `PII_ENABLE_RISK_WARNING` | 開啟 |
 | 對照表閒置逾時（秒，`0` 代表停用） | `PROXY_MAPPING_IDLE_TIMEOUT` | `1800`（30 分鐘） |
 
+上游 base URL 沒設定時，proxy **仍會正常啟動**（啟動摘要會印一行 WARNING），但每個轉發請求都會回 `502` 與一則指出該設哪個變數的訊息：
+
+```json
+{"error": {"message": "上游 base URL 未設定……請在 repo 根目錄的 .env 設定 UPSTREAM_BASE_URL……", "type": "proxy_configuration_error", "code": "upstream_not_configured"}}
+```
+
+刻意不在啟動時就讓行程死掉：`/healthz` 要留著可用，使用者正是要靠它看出 `upstream` 是空的。
+
 `PII_SKIP_TYPES` 設成空字串代表**什麼都不跳過**（連職稱也遮）；
 `PII_NER_ALLOW_TYPES` 設成空字串代表**語意層全部採信**（回到白名單前的行為，
 供比對／除錯用）。兩者大小寫都吃，內部會做同一套正規化。啟動時會把實際生效的

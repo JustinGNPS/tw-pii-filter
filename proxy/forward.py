@@ -9,6 +9,15 @@ import httpx
 
 from proxy import config
 
+# 上游 base URL 未設定時要回給 agent 的訊息。寫成常數是因為
+# `proxy/main.py` 的錯誤處理與測試都要引用同一份文字。
+MISSING_UPSTREAM_MESSAGE = (
+    "上游 base URL 未設定，proxy 不知道要把請求轉發到哪裡。"
+    "請在 repo 根目錄的 .env 設定 UPSTREAM_BASE_URL"
+    "（例：UPSTREAM_BASE_URL=https://your-llm-gateway.example/v1），"
+    "或使用別名 OPENAI_BASE_URL / OPENAI_API_BASE / AIR_BASE_URL。"
+)
+
 # hop-by-hop 標頭：只在單一連線上有意義，不可以被 proxy 原樣轉送
 # （RFC 9110 §7.6.1）。content-length / accept-encoding 交給 httpx 自己重算。
 _DROP_REQUEST_HEADERS = {
@@ -63,8 +72,24 @@ def filter_response_headers(incoming: dict[str, str]) -> dict[str, str]:
     }
 
 
+class UpstreamNotConfigured(RuntimeError):
+    """上游 base URL 沒設定 —— 是部署設定缺漏，不是 agent 送錯請求。
+
+    分成獨立的例外型別，是為了讓 `proxy/main.py` 能把它轉成一則講得清楚的
+    錯誤回覆。若讓它自然往上拋，agent 收到的是沒有任何線索的 500。
+    """
+
+
 def upstream_url(path: str) -> str:
-    """把 agent 打的路徑接到上游 base URL 後面。"""
+    """把 agent 打的路徑接到上游 base URL 後面。
+
+    base URL 沒設定時**必須在這裡擋下來**：接出來的會是 `/v1/chat/completions`
+    這種相對路徑，而 httpx 的 `build_request()` 對它不會報錯，要到 `send()`
+    才丟 `UnsupportedProtocol`（實測確認）—— 那時例外已經在轉發途中，agent
+    只會收到一個沒有任何線索的 500，看不出問題出在自己沒設 `.env`。
+    """
+    if not config.UPSTREAM_BASE_URL:
+        raise UpstreamNotConfigured(MISSING_UPSTREAM_MESSAGE)
     return f"{config.UPSTREAM_BASE_URL}/{path.lstrip('/')}"
 
 
