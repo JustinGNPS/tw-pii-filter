@@ -132,6 +132,12 @@ core/ner/requirements.txt`）。遮蔽本身（`_mask_request`）已經用
 `asyncio.to_thread` 丟到背景執行緒跑，開啟語意層後也不會卡住 event loop
 上其他請求。
 
+> ⚠️ **展示姓名/地址遮蔽時，不要用「叫 agent 讀檔」這條路徑。** Windows
+> PowerShell 5.1 的 `type` / `Get-Content` 讀 UTF-8 檔案時預設用 ANSI 代碼頁
+> （繁中是 cp950），中文在**送到 proxy 之前**就已經變成亂碼，語意層掃不到
+> （規則層的身分證、手機是 ASCII，不受影響）。改用直接貼上內容示範。
+> 詳見 `docs/B_design.md` 已知限制第 6 條與 issue #37。
+
 ### 組合風險提示（D 的 Layer 3）：只提示，不遮蔽
 
 遮蔽擋得住「字串本身就是識別碼」的東西，擋不住「沒有一個欄位是個資、組合
