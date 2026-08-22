@@ -30,6 +30,7 @@ from fastapi.responses import StreamingResponse
 from proxy import (
     anthropic_adapter,
     config,
+    demo,
     detector,
     forward,
     masker,
@@ -86,6 +87,23 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="tw-pii-filter proxy", lifespan=lifespan)
+
+# 示範頁面（`PII_ENABLE_DEMO=1` 才會真的回應，否則一律 404）。
+# **必須在檔案底部那兩條萬用路由之前註冊** —— FastAPI 依註冊順序比對，
+# 晚註冊的話 `/demo` 會先被 `/{path:path}` 接走、當成要轉發給上游的請求。
+app.include_router(demo.router)
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon() -> Response:
+    """瀏覽器會自動要 favicon，不要把它轉發給上游。
+
+    沒有這條路由的話，`/{path:path}` 萬用路由會把它當成要轉發的請求送出去 ——
+    實測是一次 1367 ms 的往返只為了拿回 404，而且會被計入「agent 流量」，
+    讓那個判準（見 `proxy/traffic.py`）失真。開了 `/demo` 頁面之後每次載入
+    都會發生一次。
+    """
+    return Response(status_code=204)
 
 
 @app.get("/healthz")

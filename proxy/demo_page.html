@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>tw-pii-filter 本機示範</title>
+<style>
+  :root {
+    --paper: #F5F7F8;
+    --surface: #FFFFFF;
+    --surface-2: #EDF1F3;
+    --ink: #12202A;
+    --muted: #5A6B78;
+    --line: #D8E0E4;
+    --seal: #1F6F73;
+    --seal-soft: rgba(31, 111, 115, 0.10);
+    --amber: #9A6714;
+    --amber-soft: rgba(154, 103, 20, 0.14);
+    --clay: #A83E33;
+    --clay-soft: rgba(168, 62, 51, 0.12);
+    --sans: "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", system-ui, sans-serif;
+    --mono: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --paper: #0E151A; --surface: #151E25; --surface-2: #1C262E;
+      --ink: #E4EBF0; --muted: #93A3AF; --line: #2A3841;
+      --seal: #58AFB0; --seal-soft: rgba(88,175,176,.16);
+      --amber: #D9A24B; --amber-soft: rgba(217,162,75,.18);
+      --clay: #D97B6E; --clay-soft: rgba(217,123,110,.16);
+    }
+  }
+  * { box-sizing: border-box; }
+  /* `.card { display: flex }` 的優先度高過瀏覽器預設的 `[hidden] { display: none }`，
+     不補這一條的話，還沒有資料的卡片會照樣顯示出來（實測撞到） */
+  [hidden] { display: none !important; }
+  body {
+    margin: 0; background: var(--paper); color: var(--ink);
+    font-family: var(--sans); line-height: 1.7;
+  }
+  .wrap { max-width: 68rem; margin: 0 auto; padding: 2rem 1.25rem 5rem; display: flex; flex-direction: column; gap: 1.75rem; }
+
+  header { display: flex; flex-wrap: wrap; align-items: baseline; gap: .5rem 1rem; border-bottom: 2px solid var(--ink); padding-bottom: 1rem; }
+  h1 { font-size: 1.5rem; margin: 0; font-weight: 700; letter-spacing: -0.01em; }
+  header .sub { color: var(--muted); font-size: .9rem; }
+  header .local { margin-left: auto; font-family: var(--mono); font-size: .72rem; letter-spacing: .08em; text-transform: uppercase; color: var(--seal); border: 1px solid var(--seal); padding: .1rem .5rem; border-radius: 99px; }
+
+  h2 { font-size: 1rem; margin: 0; font-weight: 700; display: flex; align-items: baseline; gap: .6rem; }
+  h2 .hint { font-weight: 400; font-size: .82rem; color: var(--muted); }
+
+  .card { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 1.15rem 1.25rem; display: flex; flex-direction: column; gap: .9rem; }
+
+  /* 狀態列 */
+  .status { display: grid; grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .status > div { background: var(--surface); padding: .7rem .9rem; display: flex; flex-direction: column; gap: .15rem; }
+  .status dt { font-size: .72rem; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); font-family: var(--mono); }
+  .status dd { margin: 0; font-size: .95rem; font-weight: 600; font-variant-numeric: tabular-nums; word-break: break-all; }
+  .status dd.off { color: var(--muted); font-weight: 400; }
+  .status dd.on { color: var(--seal); }
+
+  textarea {
+    width: 100%; min-height: 8.5rem; resize: vertical;
+    font-family: var(--mono); font-size: .9rem; line-height: 1.6;
+    background: var(--surface); color: var(--ink);
+    border: 1px solid var(--line); border-radius: 6px; padding: .8rem .9rem;
+  }
+  textarea:focus-visible, button:focus-visible { outline: 2px solid var(--seal); outline-offset: 2px; }
+
+  .row { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; }
+  button {
+    font-family: inherit; font-size: .88rem; cursor: pointer;
+    background: var(--surface-2); color: var(--ink);
+    border: 1px solid var(--line); border-radius: 5px; padding: .4rem .8rem;
+  }
+  button:hover { border-color: var(--seal); color: var(--seal); }
+  button.primary { background: var(--seal); border-color: var(--seal); color: #fff; font-weight: 600; padding: .45rem 1.2rem; }
+  button.primary:hover { opacity: .9; color: #fff; }
+  .spacer { margin-left: auto; }
+
+  .split { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .split > div { background: var(--surface); padding: .9rem 1rem; display: flex; flex-direction: column; gap: .5rem; min-width: 0; }
+  .split h3 { margin: 0; font-size: .72rem; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); font-family: var(--mono); }
+  .split .body { font-family: var(--mono); font-size: .85rem; line-height: 1.7; white-space: pre-wrap; word-break: break-word; }
+  .split .cloud h3 { color: var(--clay); }
+  @media (max-width: 46rem) { .split { grid-template-columns: 1fr; } }
+
+  mark { background: var(--amber-soft); color: inherit; border-bottom: 2px solid var(--amber); padding: 0 .1em; border-radius: 2px 2px 0 0; }
+  mark.skip { background: transparent; border-bottom: 2px dotted var(--muted); }
+  .tok { font-family: var(--mono); background: var(--seal-soft); color: var(--seal); font-weight: 600; padding: 0 .25em; border-radius: 3px; }
+
+  table { border-collapse: collapse; width: 100%; font-size: .88rem; }
+  th, td { text-align: left; padding: .45rem .6rem; border-bottom: 1px solid var(--line); }
+  th { font-family: var(--mono); font-size: .7rem; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+  tbody tr:last-child td { border-bottom: none; }
+  td.mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+  .tbl-scroll { overflow-x: auto; }
+
+  .pill { display: inline-block; font-family: var(--mono); font-size: .7rem; padding: .1rem .45rem; border-radius: 99px; letter-spacing: .04em; }
+  .pill.rule { background: var(--seal-soft); color: var(--seal); }
+  .pill.ner { background: var(--amber-soft); color: var(--amber); }
+  .pill.skip { background: var(--surface-2); color: var(--muted); }
+
+  .risk { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem 1rem; }
+  .risk .score { font-family: var(--mono); font-size: 2rem; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1; }
+  .risk .meter { flex: 1 1 12rem; height: .5rem; background: var(--surface-2); border-radius: 99px; overflow: hidden; min-width: 8rem; }
+  .risk .meter i { display: block; height: 100%; background: var(--seal); }
+  .risk.warn .score, .risk.warn .meter i { color: var(--clay); background-color: var(--clay); }
+  .risk.warn .score { background: none; }
+  .risk .lv { font-size: .85rem; color: var(--muted); }
+  .sugg { margin: 0; padding-left: 1.1rem; font-size: .88rem; color: var(--muted); display: flex; flex-direction: column; gap: .2rem; }
+
+  details { border: 1px solid var(--line); border-radius: 6px; background: var(--surface); }
+  summary { cursor: pointer; padding: .6rem .9rem; font-size: .88rem; font-weight: 600; }
+  summary::marker { color: var(--clay); }
+  details[open] summary { border-bottom: 1px solid var(--line); }
+  details .inner { padding: .6rem .9rem .9rem; }
+  .warnline { color: var(--clay); font-size: .8rem; margin: 0 0 .5rem; }
+
+  .metrics { display: flex; flex-wrap: wrap; gap: .4rem 1.4rem; font-family: var(--mono); font-size: .8rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .metrics b { color: var(--ink); font-weight: 600; }
+
+  .empty { color: var(--muted); font-size: .9rem; }
+  .note { font-size: .82rem; color: var(--muted); margin: 0; }
+  footer { border-top: 1px solid var(--line); padding-top: 1rem; color: var(--muted); font-size: .8rem; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <h1>tw-pii-filter 示範台</h1>
+    <span class="sub">貼一段文字，看它送去雲端前會變成什麼</span>
+    <span class="local">本機 · 不送上游</span>
+  </header>
+
+  <section class="card">
+    <h2>現況總覽 <span class="hint">proxy 目前的設定與真實流量</span></h2>
+    <dl class="status" id="status"><div><dt>載入中</dt><dd class="off">…</dd></div></dl>
+    <p class="note" id="statusNote"></p>
+  </section>
+
+  <section class="card">
+    <h2>試打台 <span class="hint">純本機運算，不會消耗任何 API 額度</span></h2>
+    <div class="row">
+      <button data-sample="crm">客服紀錄</button>
+      <button data-sample="code">程式碼片段</button>
+      <button data-sample="error">錯誤訊息</button>
+      <button data-sample="combo">只有準識別子</button>
+      <button class="spacer" id="clearBtn">清空輸入</button>
+    </div>
+    <textarea id="input" spellcheck="false" placeholder="把含個資的文字貼進來，或點上面的範例…"></textarea>
+    <div class="row">
+      <button class="primary" id="scanBtn">掃描</button>
+      <button id="resetBtn">重設對照表編號</button>
+      <span class="note spacer" id="hint">Ctrl + Enter 也可以送出</span>
+    </div>
+  </section>
+
+  <section class="card" id="resultCard" hidden>
+    <h2>結果 <span class="hint">左邊是你打的，右邊是雲端 AI 會看到的</span></h2>
+    <div class="split">
+      <div>
+        <h3>你打的（標示＝偵測到的個資）</h3>
+        <div class="body" id="origBody"></div>
+      </div>
+      <div class="cloud">
+        <h3>雲端 AI 會看到的</h3>
+        <div class="body" id="maskBody"></div>
+      </div>
+    </div>
+    <div class="metrics" id="metrics"></div>
+  </section>
+
+  <section class="card" id="spansCard" hidden>
+    <h2>偵測明細</h2>
+    <div class="tbl-scroll">
+      <table>
+        <thead><tr><th>型別</th><th>來源</th><th>位置</th><th>換成</th><th>信心</th></tr></thead>
+        <tbody id="spansBody"></tbody>
+      </table>
+    </div>
+    <p class="note" id="spansNote"></p>
+  </section>
+
+  <section class="card" id="riskCard" hidden>
+    <h2>組合風險 <span class="hint">遮蔽後仍可能指認到人的殘餘風險</span></h2>
+    <div class="risk" id="riskBox"></div>
+    <ul class="sugg" id="riskSugg"></ul>
+  </section>
+
+  <section id="mapCard" hidden>
+    <details>
+      <summary>對照表（點開會顯示明文個資）</summary>
+      <div class="inner">
+        <p class="warnline">⚠ 以下為未遮蔽的原始內容。示範或投影時請留意。</p>
+        <div class="tbl-scroll">
+          <table>
+            <thead><tr><th>佔位符</th><th>真值</th></tr></thead>
+            <tbody id="mapBody"></tbody>
+          </table>
+        </div>
+        <p class="note">同一個真值永遠對應同一個佔位符；這張表只存在記憶體，而且與 agent 正在用的那張分開。</p>
+      </div>
+    </details>
+  </section>
+
+  <footer>
+    tw-pii-filter · 本機示範介面 · 需 <code>PII_ENABLE_DEMO=1</code> 才會啟用，不參與轉發
+  </footer>
+</div>
+
+<script>
+const SAMPLES = {
+  crm: `客服紀錄 2026-03-14
+客戶 林秉軒，身分證 A123456789，手機 0912-345678
+地址：台北市中山區民生東路二段141號
+備註：35 歲男性，資深後端工程師，希望改用 email 聯絡`,
+  code: `CUSTOMERS = [
+    {"id": 1, "name": "林秉軒", "id_number": "A123456789", "phone": "0912-345678"},
+    {"id": 2, "name": "陳雅婷", "id_number": "F131104093", "phone": "0923-456789"},
+]
+
+# TODO: 匯出前記得過濾 id_number 欄位`,
+  error: `Traceback (most recent call last):
+  File "billing.py", line 88, in charge
+    stripe.Charge.create(card="4111111111111111", key="sk-proj-AbCdEf1234567890XyZ")
+requests.HTTPError: 402 for user peter0905@example.com (統編 12345675)`,
+  combo: `這位客戶是 35 歲的女性，住在新竹市東區，
+在園區某間半導體公司擔任資深製程工程師，
+上週來電詢問合約續約事宜。`
+};
+
+const $ = (id) => document.getElementById(id);
+const esc = (s) => s.replace(/[&<>"]/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+document.querySelectorAll('[data-sample]').forEach((b) => {
+  b.addEventListener('click', () => { $('input').value = SAMPLES[b.dataset.sample]; scan(); });
+});
+$('clearBtn').addEventListener('click', () => { $('input').value = ''; $('input').focus(); });
+$('scanBtn').addEventListener('click', scan);
+$('resetBtn').addEventListener('click', async () => {
+  await fetch('/demo/reset', { method: 'POST' });
+  $('hint').textContent = '對照表已清空，編號從 1 重新開始';
+  scan();
+});
+$('input').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) scan();
+});
+
+function highlight(text, spans) {
+  let out = '', cursor = 0;
+  [...spans].sort((a, b) => a.start - b.start).forEach((s) => {
+    if (s.start < cursor) return;
+    out += esc(text.slice(cursor, s.start));
+    const cls = s.skipped ? 'skip' : '';
+    const title = s.skipped ? `${s.type}（偵測到，但依設定不遮蔽）` : `${s.type} → ${s.token}`;
+    out += `<mark class="${cls}" title="${esc(title)}">${esc(s.text)}</mark>`;
+    cursor = s.end;
+  });
+  return out + esc(text.slice(cursor));
+}
+
+function markTokens(masked) {
+  return esc(masked).replace(/\[([A-Z_]+)_(\d+)\]/g, '<span class="tok">[$1_$2]</span>');
+}
+
+async function scan() {
+  const text = $('input').value;
+  if (!text.trim()) { $('resultCard').hidden = true; $('spansCard').hidden = true; $('riskCard').hidden = true; $('mapCard').hidden = true; return; }
+
+  const res = await fetch('/demo/scan', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text })
+  });
+  if (!res.ok) { $('hint').textContent = '掃描失敗：' + res.status; return; }
+  const d = await res.json();
+
+  $('resultCard').hidden = false;
+  $('origBody').innerHTML = highlight(text, d.spans);
+  $('maskBody').innerHTML = markTokens(d.masked);
+
+  const total = Object.values(d.counts).reduce((a, b) => a + b, 0);
+  const detail = Object.entries(d.counts).map(([t, n]) => `${t} x${n}`).join('、') || '無';
+  // 每一項各自包一個 span：`.metrics` 是 flex 容器，若全部串成一個字串就只會是
+  // 一個 flex 子元素，gap 不會生效、各項會黏在一起（實測撞到）
+  $('metrics').innerHTML = [
+    `遮蔽 <b>${total}</b> 處（${detail}）`,
+    `偵測 <b>${d.timing.detect_ms}</b> ms`,
+    `替換 <b>${d.timing.mask_ms}</b> ms`,
+    `快取命中率 <b>${Math.round(d.cache.hit_rate * 100)}%</b>`
+  ].map((m) => `<span>${m}</span>`).join('');
+
+  // 偵測明細
+  $('spansCard').hidden = d.spans.length === 0;
+  $('spansBody').innerHTML = d.spans.map((s) => {
+    const src = s.source === 'ner' ? '<span class="pill ner">語意層</span>' : '<span class="pill rule">規則層</span>';
+    const token = s.skipped ? '<span class="pill skip">不遮蔽</span>' : `<span class="tok">${esc(s.token)}</span>`;
+    const conf = s.confidence == null ? '—' : Number(s.confidence).toFixed(2);
+    return `<tr><td><b>${esc(s.type)}</b></td><td>${src}</td><td class="mono">${s.start}–${s.end}</td><td>${token}</td><td class="mono">${conf}</td></tr>`;
+  }).join('');
+  $('spansNote').textContent = d.ner_enabled
+    ? `不遮蔽的型別：${d.skip_types.join('、') || '無'}（偵測得到，但依設定保留原文，仍會計入組合風險）`
+    : `語意層未啟用，因此姓名與地址不會被偵測到 —— 目前只有規則層在跑。不遮蔽的型別：${d.skip_types.join('、') || '無'}`;
+
+  // 組合風險
+  const r = d.risk;
+  if (r && r.score > 0) {
+    $('riskCard').hidden = false;
+    const warn = r.score >= 0.6;
+    $('riskBox').className = 'risk' + (warn ? ' warn' : '');
+    $('riskBox').innerHTML =
+      `<span class="score">${r.score.toFixed(2)}</span>` +
+      `<span class="meter"><i style="width:${Math.round(r.score * 100)}%"></i></span>` +
+      `<span class="lv">${esc(r.risk_level)}　準識別子：${r.contributing_types.map(esc).join('、') || '無'}</span>`;
+    $('riskSugg').innerHTML = (r.suggestions || []).map((s) => `<li>${esc(s)}</li>`).join('');
+  } else {
+    $('riskCard').hidden = true;
+  }
+
+  // 對照表
+  $('mapCard').hidden = d.mapping.length === 0;
+  $('mapBody').innerHTML = d.mapping.map((m) =>
+    `<tr><td><span class="tok">${esc(m.token)}</span></td><td class="mono">${esc(m.value)}</td></tr>`
+  ).join('');
+
+  loadStatus();
+}
+
+async function loadStatus() {
+  const res = await fetch('/demo/status');
+  if (!res.ok) return;
+  const s = await res.json();
+  const cell = (label, value, cls) => `<div><dt>${label}</dt><dd class="${cls || ''}">${value}</dd></div>`;
+  const t = s.traffic;
+  $('status').innerHTML = [
+    cell('上游', s.upstream_configured ? '已設定' : '未設定', s.upstream_configured ? 'on' : 'off'),
+    cell('預設模型', esc(s.model)),
+    cell('語意層', s.ner_enabled ? '已啟用' : '未啟用（僅規則層）', s.ner_enabled ? 'on' : 'off'),
+    cell('組合風險', s.risk_warning_enabled ? '已啟用' : '未啟用', s.risk_warning_enabled ? 'on' : 'off'),
+    cell('agent 流量', t.requests + ' 次', t.requests > 0 ? 'on' : 'off'),
+    cell('對照表（實際）', s.live_mapping_entries + ' 筆'),
+    cell('偵測快取', Math.round(s.live_cache.hit_rate * 100) + '%'),
+    cell('不遮蔽型別', s.skip_types.join('、') || '無')
+  ].join('');
+  $('statusNote').textContent = t.requests === 0
+    ? 'agent 流量 0 次代表還沒有任何 agent 連過來 —— 這一欄是用來確認「流量真的有走 proxy」的。'
+    : `最近一次 agent 請求：${t.last_at}（${t.seconds_since_last} 秒前）`;
+}
+
+loadStatus();
+</script>
+</body>
+</html>
