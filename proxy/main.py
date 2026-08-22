@@ -98,6 +98,9 @@ async def healthz() -> dict:
         "mode": "masking",  # 第二版：遮蔽 + 還原
         "ner_enabled": config.ENABLE_NER,
         "mapping_entries": len(app.state.mapping),
+        # 累計：每個型別看過幾個不重複的真值。log 只印「本輪新增」，
+        # 想知道整體狀況看這裡（見 _log_new_values）
+        "mapping_by_type": app.state.mapping.issued_counts(),
         "detection_cache": detector.CACHE.stats(),
         "traffic": traffic.STATS.snapshot(),
     }
@@ -115,6 +118,31 @@ def _record_arrival(method: str, path: str) -> None:
             method,
             path.lstrip("/"),
         )
+
+
+def _log_new_values(before: dict[str, int], table: MappingTable, tag: str = "") -> None:
+    """印出「這一輪新增的個資」，沒有新增就**完全不印**。
+
+    為什麼不印「這包 payload 遮了幾筆」：agent 每輪都重送整段對話歷史，同一批
+    個資每輪都會被重新掃到，那個數字會隨對話變長一路往上爬（實測一次 Codex
+    工作階段：6 -> 8 -> 14 -> 17，而後面三輪根本沒有任何新的個資）。使用者
+    真正要知道的是「**又有沒看過的個資送出去了**」，不是「歷史裡總共有幾筆」。
+
+    沒有新增就靜默，是因為那種情況沒有任何新資訊 —— 該輪仍然有一行
+    `POST /... -> 200` 的完成紀錄可以證明 proxy 有在工作，累計狀況則看
+    `/healthz` 的 `mapping_by_type`。
+
+    只印型別與數量，絕不印遮蔽掉的原始內容。
+    """
+    new = masker.new_value_counts(before, table.issued_counts())
+    if not new:
+        return
+    logger.warning(
+        "已遮蔽%s：%s｜快取命中率 %.0f%%",
+        tag,
+        detector.format_new_values(new),
+        detector.CACHE.hit_rate * 100,
+    )
 
 
 def _log_combination_risk(combination_risk: dict | None) -> None:
@@ -145,15 +173,11 @@ def _mask_request(path: str, body: bytes, table: MappingTable) -> tuple[bytes, f
     started = time.perf_counter()
     try:
         payload = json.loads(body.decode("utf-8"))
+        issued_before = table.issued_counts()
         counts, combination_risk = masker.mask_payload_with_risk(payload, table)
         if counts:
             body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-            # 只印型別與筆數，絕不印遮蔽掉的原始內容
-            logger.warning(
-                "已遮蔽：%s｜快取命中率 %.0f%%",
-                detector.format_warning(counts),
-                detector.CACHE.hit_rate * 100,
-            )
+        _log_new_values(issued_before, table)
         _log_combination_risk(combination_risk)
     except json.JSONDecodeError:
         pass  # 不是 JSON（例如檔案上傳），本來就沒得掃
@@ -282,13 +306,9 @@ def _mask_anthropic_payload(payload: dict, table: MappingTable) -> tuple[dict, f
     """
     started = time.perf_counter()
     try:
-        counts, combination_risk = masker.mask_payload_with_risk(payload, table)
-        if counts:
-            logger.warning(
-                "已遮蔽（Claude Code）：%s｜快取命中率 %.0f%%",
-                detector.format_warning(counts),
-                detector.CACHE.hit_rate * 100,
-            )
+        issued_before = table.issued_counts()
+        _, combination_risk = masker.mask_payload_with_risk(payload, table)
+        _log_new_values(issued_before, table, tag="（Claude Code）")
         _log_combination_risk(combination_risk)
     except Exception as exc:  # noqa: BLE001 - 遮蔽失敗不能讓 agent 拿不到回覆
         logger.error("遮蔽失敗，該次請求未受保護：%s", exc)
