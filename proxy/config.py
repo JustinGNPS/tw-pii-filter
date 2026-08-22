@@ -103,6 +103,19 @@ SKIP_TYPES = _parse_types(
 # 設定方式：`.env` 或環境變數 `PII_ENABLE_NER=1`（或 `true`/`yes`，大小寫不拘）。
 ENABLE_NER = os.getenv("PII_ENABLE_NER", "").strip().lower() in ("1", "true", "yes")
 
+# 本機示範頁面 -------------------------------------------------------------
+#
+# 預設**關閉**。開啟後 `/demo` 會提供一個頁面，可以貼文字進去即時看到偵測、
+# 遮蔽、組合風險與目前設定 —— 給團隊內部操作與展示用，不參與轉發。
+#
+# 為什麼要用開關而不是一直開著：那個頁面會回傳**未遮蔽的原文與對照表**
+# （明文個資），而且提供一個不需認證就能呼叫偵測核心的端點。平常跑 proxy
+# 沒有理由開著它。關閉時所有 `/demo` 端點一律回 404（不是 403 ——
+# 沒開就等於不存在）。
+#
+# 設定方式：`.env` 或環境變數 `PII_ENABLE_DEMO=1`（或 `true`/`yes`）。
+ENABLE_DEMO = os.getenv("PII_ENABLE_DEMO", "").strip().lower() in ("1", "true", "yes")
+
 # 語意層採信的型別（白名單）---------------------------------------------------
 #
 # 語意層用的 `gyr66/bert-base-chinese-finetuned-ner` 是**通用領域**中文 NER
@@ -186,5 +199,6 @@ def startup_summary() -> str:
         f"偵測到但不遮蔽的型別：{skipped}\n"
         f"語意層（NER）：{ner_status}\n"
         f"組合風險提示：{'已啟用' if ENABLE_RISK_WARNING else '未啟用'}\n"
-        f"對照表閒置逾時：{f'{MAPPING_IDLE_TIMEOUT:.0f} 秒' if MAPPING_IDLE_TIMEOUT else '停用'}"
+        f"對照表閒置逾時：{f'{MAPPING_IDLE_TIMEOUT:.0f} 秒' if MAPPING_IDLE_TIMEOUT else '停用'}\n"
+        f"示範頁面：{'已啟用（/demo）' if ENABLE_DEMO else '未啟用（設 PII_ENABLE_DEMO=1 開啟）'}"
     )

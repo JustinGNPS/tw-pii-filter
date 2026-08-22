@@ -1,0 +1,652 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>tw-pii-filter 本機示範</title>
+<style>
+  :root {
+    --paper: #F5F7F8;
+    --surface: #FFFFFF;
+    --surface-2: #EDF1F3;
+    --ink: #12202A;
+    --muted: #5A6B78;
+    --line: #D8E0E4;
+    --seal: #1F6F73;
+    --seal-soft: rgba(31, 111, 115, 0.10);
+    --amber: #9A6714;
+    --amber-soft: rgba(154, 103, 20, 0.14);
+    --clay: #A83E33;
+    --clay-soft: rgba(168, 62, 51, 0.12);
+    --sans: "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", system-ui, sans-serif;
+    --mono: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --paper: #0E151A; --surface: #151E25; --surface-2: #1C262E;
+      --ink: #E4EBF0; --muted: #93A3AF; --line: #2A3841;
+      --seal: #58AFB0; --seal-soft: rgba(88,175,176,.16);
+      --amber: #D9A24B; --amber-soft: rgba(217,162,75,.18);
+      --clay: #D97B6E; --clay-soft: rgba(217,123,110,.16);
+    }
+  }
+  * { box-sizing: border-box; }
+  /* `.card { display: flex }` 的優先度高過瀏覽器預設的 `[hidden] { display: none }`，
+     不補這一條的話，還沒有資料的卡片會照樣顯示出來（實測撞到） */
+  [hidden] { display: none !important; }
+  body {
+    margin: 0; background: var(--paper); color: var(--ink);
+    font-family: var(--sans); line-height: 1.7;
+  }
+  .wrap { max-width: 68rem; margin: 0 auto; padding: 2rem 1.25rem 5rem; display: flex; flex-direction: column; gap: 1.5rem; }
+
+  header { display: flex; flex-wrap: wrap; align-items: baseline; gap: .5rem 1rem; }
+  h1 { font-size: 1.5rem; margin: 0; font-weight: 700; letter-spacing: -0.01em; }
+  header .sub { color: var(--muted); font-size: .9rem; }
+  header .local { margin-left: auto; font-family: var(--mono); font-size: .72rem; letter-spacing: .08em; text-transform: uppercase; color: var(--seal); border: 1px solid var(--seal); padding: .1rem .5rem; border-radius: 99px; }
+
+  nav.tabs { display: flex; flex-wrap: wrap; gap: .25rem; border-bottom: 2px solid var(--ink); }
+  nav.tabs button {
+    font-family: inherit; font-size: .92rem; font-weight: 600; cursor: pointer;
+    background: none; border: none; border-bottom: 3px solid transparent;
+    color: var(--muted); padding: .5rem .9rem; margin-bottom: -2px; border-radius: 4px 4px 0 0;
+  }
+  nav.tabs button:hover { color: var(--ink); background: var(--surface-2); }
+  nav.tabs button[aria-selected="true"] { color: var(--seal); border-bottom-color: var(--seal); }
+  nav.tabs button:focus-visible { outline: 2px solid var(--seal); outline-offset: -2px; }
+
+  .panel { display: flex; flex-direction: column; gap: 1.5rem; }
+
+  h2 { font-size: 1rem; margin: 0; font-weight: 700; display: flex; align-items: baseline; gap: .6rem; flex-wrap: wrap; }
+  h2 .hint { font-weight: 400; font-size: .82rem; color: var(--muted); }
+  h3 { font-size: .95rem; margin: .4rem 0 0; font-weight: 700; }
+
+  .card { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 1.15rem 1.25rem; display: flex; flex-direction: column; gap: .9rem; }
+
+  .status { display: grid; grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .status > div { background: var(--surface); padding: .7rem .9rem; display: flex; flex-direction: column; gap: .15rem; }
+  .status dt { font-size: .72rem; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); font-family: var(--mono); }
+  .status dd { margin: 0; font-size: .95rem; font-weight: 600; font-variant-numeric: tabular-nums; word-break: break-all; }
+  .status dd.off { color: var(--muted); font-weight: 400; }
+  .status dd.on { color: var(--seal); }
+
+  textarea {
+    width: 100%; min-height: 7.5rem; resize: vertical;
+    font-family: var(--mono); font-size: .9rem; line-height: 1.6;
+    background: var(--surface); color: var(--ink);
+    border: 1px solid var(--line); border-radius: 6px; padding: .8rem .9rem;
+  }
+  textarea:focus-visible, button:focus-visible { outline: 2px solid var(--seal); outline-offset: 2px; }
+
+  .row { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; }
+  button.btn {
+    font-family: inherit; font-size: .88rem; cursor: pointer;
+    background: var(--surface-2); color: var(--ink);
+    border: 1px solid var(--line); border-radius: 5px; padding: .4rem .8rem;
+  }
+  button.btn:hover { border-color: var(--seal); color: var(--seal); }
+  button.btn.primary { background: var(--seal); border-color: var(--seal); color: #fff; font-weight: 600; padding: .45rem 1.2rem; }
+  button.btn.primary:hover { opacity: .9; color: #fff; }
+  .spacer { margin-left: auto; }
+
+  .split { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .split > div { background: var(--surface); padding: .9rem 1rem; display: flex; flex-direction: column; gap: .5rem; min-width: 0; }
+  .split h4 { margin: 0; font-size: .72rem; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); font-family: var(--mono); }
+  .split .body { font-family: var(--mono); font-size: .85rem; line-height: 1.7; white-space: pre-wrap; word-break: break-word; }
+  .split .cloud h4 { color: var(--clay); }
+  .split .back h4 { color: var(--seal); }
+  @media (max-width: 46rem) { .split { grid-template-columns: 1fr; } }
+
+  mark { background: var(--amber-soft); color: inherit; border-bottom: 2px solid var(--amber); padding: 0 .1em; border-radius: 2px 2px 0 0; }
+  mark.skip { background: transparent; border-bottom: 2px dotted var(--muted); }
+  .tok { font-family: var(--mono); background: var(--seal-soft); color: var(--seal); font-weight: 600; padding: 0 .25em; border-radius: 3px; }
+  .tok.unknown { background: var(--clay-soft); color: var(--clay); }
+
+  table { border-collapse: collapse; width: 100%; font-size: .88rem; }
+  th, td { text-align: left; padding: .45rem .6rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-family: var(--mono); font-size: .7rem; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+  tbody tr:last-child td { border-bottom: none; }
+  td.mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+  .tbl-scroll { overflow-x: auto; }
+
+  .pill { display: inline-block; font-family: var(--mono); font-size: .7rem; padding: .1rem .45rem; border-radius: 99px; letter-spacing: .04em; white-space: nowrap; }
+  .pill.rule { background: var(--seal-soft); color: var(--seal); }
+  .pill.ner { background: var(--amber-soft); color: var(--amber); }
+  .pill.skip { background: var(--surface-2); color: var(--muted); }
+  .pill.ok { background: var(--seal-soft); color: var(--seal); }
+  .pill.gap { background: var(--clay-soft); color: var(--clay); }
+  .pill.wip { background: var(--amber-soft); color: var(--amber); }
+
+  .risk { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem 1rem; }
+  .risk .score { font-family: var(--mono); font-size: 2rem; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1; }
+  .risk .meter { flex: 1 1 12rem; height: .5rem; background: var(--surface-2); border-radius: 99px; overflow: hidden; min-width: 8rem; }
+  .risk .meter i { display: block; height: 100%; background: var(--seal); }
+  .risk.warn .meter i { background: var(--clay); }
+  .risk.warn .score { color: var(--clay); }
+  .risk .lv { font-size: .85rem; color: var(--muted); }
+  .sugg { margin: 0; padding-left: 1.1rem; font-size: .88rem; color: var(--muted); display: flex; flex-direction: column; gap: .2rem; }
+
+  details { border: 1px solid var(--line); border-radius: 6px; background: var(--surface); }
+  summary { cursor: pointer; padding: .6rem .9rem; font-size: .88rem; font-weight: 600; }
+  summary::marker { color: var(--clay); }
+  details[open] summary { border-bottom: 1px solid var(--line); }
+  details .inner { padding: .6rem .9rem .9rem; }
+  .warnline { color: var(--clay); font-size: .8rem; margin: 0 0 .5rem; }
+
+  .metrics { display: flex; flex-wrap: wrap; gap: .4rem 1.4rem; font-family: var(--mono); font-size: .8rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .metrics b { color: var(--ink); font-weight: 600; }
+
+  .note { font-size: .82rem; color: var(--muted); margin: 0; }
+  p { margin: 0; }
+  ul { margin: 0; padding-left: 1.2rem; display: flex; flex-direction: column; gap: .3rem; }
+  li::marker { color: var(--seal); }
+  code { font-family: var(--mono); font-size: .88em; background: var(--surface-2); padding: .1em .35em; border-radius: 3px; }
+  pre { font-family: var(--mono); font-size: .82rem; line-height: 1.6; background: var(--surface-2); border-left: 3px solid var(--seal); padding: .8rem 1rem; margin: 0; overflow-x: auto; border-radius: 0 4px 4px 0; }
+  pre code { background: none; padding: 0; }
+
+  .flow { display: flex; flex-direction: column; }
+  .flow .step { display: grid; grid-template-columns: 7.5rem 1fr; gap: 1rem; padding: .55rem 0; border-bottom: 1px dashed var(--line); align-items: baseline; }
+  .flow .step:last-child { border-bottom: none; }
+  .flow .where { font-family: var(--mono); font-size: .8rem; color: var(--seal); font-weight: 600; }
+  .flow .step.cloud .where { color: var(--clay); }
+  .flow .what { font-size: .92rem; }
+  @media (max-width: 34rem) { .flow .step { grid-template-columns: 1fr; gap: .1rem; } }
+
+  footer { border-top: 1px solid var(--line); padding-top: 1rem; color: var(--muted); font-size: .8rem; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <h1>tw-pii-filter 示範台</h1>
+    <span class="sub">貼一段文字，看它送去雲端前會變成什麼</span>
+    <span class="local">本機 · 不送上游</span>
+  </header>
+
+  <nav class="tabs" role="tablist">
+    <button role="tab" data-tab="try" aria-selected="true">試打台</button>
+    <button role="tab" data-tab="what" aria-selected="false">功能與流程</button>
+    <button role="tab" data-tab="ext" aria-selected="false">瀏覽器擴充</button>
+    <button role="tab" data-tab="status" aria-selected="false">現況總覽</button>
+  </nav>
+
+  <div class="panel" id="panel-try">
+
+    <section class="card">
+      <h2>① 送出前 <span class="hint">純本機運算，不會消耗任何 API 額度</span></h2>
+      <div class="row">
+        <button class="btn" data-sample="crm">客服紀錄</button>
+        <button class="btn" data-sample="code">程式碼片段</button>
+        <button class="btn" data-sample="error">錯誤訊息</button>
+        <button class="btn" data-sample="combo">只有準識別子</button>
+        <button class="btn spacer" id="clearBtn">清空輸入</button>
+      </div>
+      <textarea id="input" spellcheck="false" placeholder="把含個資的文字貼進來，或點上面的範例…"></textarea>
+      <div class="row">
+        <button class="btn primary" id="scanBtn">掃描</button>
+        <button class="btn" id="resetBtn">重設對照表編號</button>
+        <span class="note spacer" id="hint">Ctrl + Enter 也可以送出</span>
+      </div>
+    </section>
+
+    <section class="card" id="resultCard" hidden>
+      <h2>結果 <span class="hint">左邊是你打的，右邊是雲端 AI 會看到的</span></h2>
+      <div class="split">
+        <div>
+          <h4>你打的（標示＝偵測到的個資）</h4>
+          <div class="body" id="origBody"></div>
+        </div>
+        <div class="cloud">
+          <h4>雲端 AI 會看到的</h4>
+          <div class="body" id="maskBody"></div>
+        </div>
+      </div>
+      <div class="metrics" id="metrics"></div>
+    </section>
+
+    <section class="card" id="spansCard" hidden>
+      <h2>偵測明細</h2>
+      <div class="tbl-scroll">
+        <table>
+          <thead><tr><th>型別</th><th>來源</th><th>位置</th><th>換成</th><th>信心</th></tr></thead>
+          <tbody id="spansBody"></tbody>
+        </table>
+      </div>
+      <p class="note" id="spansNote"></p>
+    </section>
+
+    <section class="card" id="riskCard" hidden>
+      <h2>組合風險 <span class="hint">遮蔽後仍可能指認到人的殘餘風險 · 只提示，不遮蔽</span></h2>
+      <div class="risk" id="riskBox"></div>
+      <ul class="sugg" id="riskSugg"></ul>
+    </section>
+
+    <section id="mapCard" hidden>
+      <details>
+        <summary>對照表（點開會顯示明文個資）</summary>
+        <div class="inner">
+          <p class="warnline">⚠ 以下為未遮蔽的原始內容。示範或投影時請留意。</p>
+          <div class="tbl-scroll">
+            <table>
+              <thead><tr><th>佔位符</th><th>真值</th></tr></thead>
+              <tbody id="mapBody"></tbody>
+            </table>
+          </div>
+          <p class="note">同一個真值永遠對應同一個佔位符；這張表只存在記憶體，而且與 agent 正在用的那張分開。</p>
+        </div>
+      </details>
+    </section>
+
+    <section class="card" id="restoreCard" hidden>
+      <h2>② 回來時 <span class="hint">這是整套機制比較難、也比較關鍵的一半</span></h2>
+      <p class="note">
+        真實運作時，雲端 AI 的回覆裡會帶著佔位符，proxy 在送到你眼前之前換回真值 ——
+        所以你完全感覺不到中間發生過什麼。下面已經幫你填好一段「假的 AI 回覆」，
+        也可以自己改。<strong>不會呼叫任何雲端服務。</strong>
+      </p>
+      <textarea id="replyInput" spellcheck="false" placeholder="打一段含佔位符的假回覆，例如：第一位客戶的身分證是 [TW_ID_1]"></textarea>
+      <div class="row">
+        <button class="btn primary" id="restoreBtn">還原</button>
+        <button class="btn" id="hallucinateBtn">加一個 AI 亂編的佔位符</button>
+      </div>
+      <div class="split" id="restoreResult" hidden>
+        <div class="cloud">
+          <h4>AI 送回來的（含佔位符）</h4>
+          <div class="body" id="replyBody"></div>
+        </div>
+        <div class="back">
+          <h4>你實際看到的</h4>
+          <div class="body" id="restoredBody"></div>
+        </div>
+      </div>
+      <div class="metrics" id="restoreMetrics"></div>
+      <p class="note" id="restoreNote"></p>
+    </section>
+
+  </div>
+
+  <div class="panel" id="panel-what" hidden>
+
+    <section class="card">
+      <h2>這個專案在做什麼</h2>
+      <p>資料送往雲端 AI 之前，在本地完成台灣個資的偵測與<strong>可逆</strong>遮蔽；AI 回覆時自動換回真值。<strong>使用者全程無感，雲端全程看不到真資料。</strong></p>
+      <p class="note">補的缺口：Presidio / GLiNER / LLM Guard 這些國外工具對台灣身分證、統編的偵測率是 0.000，而且沒有任何一套會驗證檢核碼。</p>
+    </section>
+
+    <section class="card">
+      <h2>四層偵測核心 <span class="hint">一個核心，兩個載體共用</span></h2>
+      <div class="tbl-scroll">
+        <table>
+          <thead><tr><th>層</th><th>誰做</th><th>做什麼</th><th>特性</th></tr></thead>
+          <tbody>
+            <tr><td><b>Layer 1</b><br>規則層</td><td>A</td><td>正則找出格式符合的字串，再用<b>檢核碼演算法</b>驗證真偽。8 種型別：TW_ID / TW_TAX / TW_NHI / TW_PHONE_M / TW_PHONE_L / EMAIL / CREDIT_CARD / API_KEY</td><td><span class="pill ok">確定性</span> 幾乎不漏</td></tr>
+            <tr><td><b>Layer 2</b><br>語意層</td><td>D</td><td>中文 BERT NER 判斷姓名、地址、公司、職稱 —— 這些沒有檢核碼可驗，也沒有固定格式</td><td><span class="pill ner">機率性</span> recall 97.6%</td></tr>
+            <tr><td><b>Layer 3</b><br>組合風險</td><td>D</td><td>「沒有一個欄位是個資、組合起來卻指得到人」的情況評分並給泛化建議</td><td><span class="pill wip">只提示</span> 不遮蔽</td></tr>
+            <tr><td><b>Layer 4</b><br>重疊仲裁</td><td>A</td><td>兩層結果打架時擇一，保證回傳的範圍互不重疊</td><td><span class="pill ok">下游地基</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="note">Layer 4 在遮蔽<b>之前</b>（座標重疊會把文字切爛）；Layer 3 在遮蔽<b>之後</b>（要算的是 AI 實際看得到的殘餘風險）。</p>
+    </section>
+
+    <section class="card">
+      <h2>兩個載體 <span class="hint">攔的位置不同，面向的人不同</span></h2>
+      <div class="tbl-scroll">
+        <table>
+          <thead><tr><th>載體</th><th>誰做</th><th>攔在哪</th><th>面向</th><th>狀態</th></tr></thead>
+          <tbody>
+            <tr><td>瀏覽器擴充</td><td>C</td><td>你在 ChatGPT 輸入框按 Ctrl+V 的那一刻</td><td>一般使用者</td><td><span class="pill ok">可用</span></td></tr>
+            <tr><td>API Proxy</td><td>B</td><td>AI coding agent 送出 API 請求的那一刻</td><td>開發者</td><td><span class="pill ok">可用</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>完整運作流程 <span class="hint">以 agent 走 proxy 為例</span></h2>
+      <div class="flow">
+        <div class="step"><span class="where">你的機器</span><span class="what">你叫 agent 幫你改一份含客戶資料的程式碼</span></div>
+        <div class="step"><span class="where">agent</span><span class="what">讀檔，把內容組成 API 請求送出（base URL 指向 proxy）</span></div>
+        <div class="step"><span class="where">proxy 攔截</span><span class="what">從 payload 裡挖出所有該掃的欄位（不同協定放的位置不同）</span></div>
+        <div class="step"><span class="where">偵測</span><span class="what">Layer 1 + Layer 2 各自掃 → Layer 4 仲裁 → 得到互不重疊的位置清單</span></div>
+        <div class="step"><span class="where">遮蔽</span><span class="what">從後往前替換成佔位符，同一真值配同一號碼，記進對照表</span></div>
+        <div class="step"><span class="where">評分</span><span class="what">Layer 3 對遮蔽後的內容評分，超過門檻印警示（不動內容）</span></div>
+        <div class="step cloud"><span class="where">雲端 AI</span><span class="what">收到的、算出的、回覆的，全都是佔位符</span></div>
+        <div class="step"><span class="where">還原</span><span class="what">回覆是逐字串流的，佔位符可能被切在兩個封包之間 —— 緩衝處理後換回真值</span></div>
+        <div class="step"><span class="where">你看到的</span><span class="what">跟沒裝過濾器時完全一樣</span></div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>三條使用路徑的操作流程</h2>
+
+      <h3>路徑一：AI coding agent 走 proxy</h3>
+      <pre><code>1. 在 .env 設定上游端點與金鑰
+   UPSTREAM_BASE_URL=https://your-llm-gateway/v1
+   UPSTREAM_API_KEY=...
+
+2. 啟動 proxy
+   .venv\Scripts\python.exe -m uvicorn proxy.main:app --port 8010
+
+3. 把 agent 的 base URL 指過來
+   Aider       OPENAI_API_BASE=http://localhost:8010/v1
+   Codex       config.toml 自訂 provider（wire_api = "responses"）
+   Claude Code ANTHROPIC_BASE_URL=http://localhost:8010
+
+4. 確認流量真的走了 proxy
+   看到「第一個請求已抵達 proxy」這一行才算數</code></pre>
+      <p class="note">實測通過：Aider、OpenCode、Continue、Cline、Codex、Claude Code。<b>Cursor 攔不到</b>（走自家後端，沒有自訂位址欄位），誠實列為不支援。</p>
+
+      <h3>路徑二：瀏覽器擴充</h3>
+      <pre><code>cd extension
+npm install
+npm run build
+→ chrome://extensions → 開發人員模式 → 載入未封裝項目 → 選 extension/dist</code></pre>
+      <p class="note">之後在 ChatGPT / Claude / Gemini 貼上含個資的文字會跳出確認面板。</p>
+
+      <h3>路徑三：開啟語意層（姓名、地址）</h3>
+      <pre><code>.venv\Scripts\python.exe -m pip install -r core/ner/requirements.txt
+set PII_ENABLE_NER=1</code></pre>
+      <p class="note">模型約 389 MB，第一次會下載，之後<b>完全離線運作</b>。這一點很重要：如果語意判斷要送雲端，整個專案就自我矛盾了。</p>
+    </section>
+
+    <section class="card">
+      <h2>實測數據</h2>
+      <div class="tbl-scroll">
+        <table>
+          <thead><tr><th>項目</th><th>數值</th><th>備註</th></tr></thead>
+          <tbody>
+            <tr><td>規則層遮蔽</td><td class="mono">1.6〜5.8 ms</td><td>真實 Codex 工作階段</td></tr>
+            <tr><td>語意層（38 字）</td><td class="mono">43 ms</td><td>CPU，成本與長度成正比</td></tr>
+            <tr><td>語意層（3040 字）</td><td class="mono">2265 ms</td><td>同上</td></tr>
+            <tr><td>偵測快取命中率</td><td class="mono">57% → 87%</td><td>對話越長越高</td></tr>
+            <tr><td>語意層 recall</td><td class="mono">97.6%</td><td>修好 512 token 截斷後</td></tr>
+            <tr><td>agent 相容性</td><td class="mono">6 / 7</td><td>Cursor 不支援</td></tr>
+            <tr><td>測試</td><td class="mono">375 + 35</td><td>Python + TypeScript</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>目前的缺口 <span class="hint">誠實列出來，不藏</span></h2>
+      <ul>
+        <li><span class="pill gap">缺口</span> <b>全形英數偵測不到</b> —— <code>Ａ１２３４５６７８９</code> 這種寫法會整個漏掉</li>
+        <li><span class="pill gap">缺口</span> 組合風險有三種型別的權重是死碼（被語意層白名單擋掉）</li>
+        <li><span class="pill wip">未做</span> Claude Code 的圖片／文件附件還不會翻譯</li>
+        <li><span class="pill wip">未做</span> 打包成一般使用者可以直接下載安裝的形式</li>
+      </ul>
+    </section>
+  </div>
+
+  <div class="panel" id="panel-ext" hidden>
+    <section class="card">
+      <h2>載體一：瀏覽器擴充 <span class="hint">C 負責 · 與這個 proxy 是兩條平行的路線</span></h2>
+      <p>面向<strong>一般使用者</strong>：不用裝 Python、不用開終端機，裝上擴充之後照常用 ChatGPT，貼上含個資的文字時會跳出確認面板。</p>
+      <p class="note">⚠ 這一頁是<b>說明</b>。擴充跑在瀏覽器裡、是獨立的 TypeScript 實作，沒辦法在這個由 proxy 端出來的頁面裡直接執行。</p>
+    </section>
+
+    <section class="card">
+      <h2>為什麼主要入口是「貼上」而不是右鍵選單</h2>
+      <p>規劃書原本設定右鍵選單為主，實作時改成攔截 <code>paste</code> 事件，兩個理由：</p>
+      <ul>
+        <li><b>權限</b>：右鍵選單拿不到剪貼簿內容，得額外要 <code>clipboardRead</code> 權限 —— 上架審查會被追問，也讓「最小權限」的訴求打折。攔截 paste 用 <code>event.clipboardData</code>，不需要任何額外權限。</li>
+        <li><b>體驗</b>：真正危險的情境是「沒多想就 Ctrl+V」，而<b>右鍵選單保護不到沒多想的人</b>。攔截 paste 讓使用者照常操作就被保護，零學習成本。</li>
+      </ul>
+      <p class="note">右鍵選單保留為次要入口，處理已經打在輸入框裡的文字。</p>
+    </section>
+
+    <section class="card">
+      <h2>技術上最特別的一件事：跨語言一致性</h2>
+      <p>瀏覽器裡跑不了 Python，所以規則層有一份<strong>TypeScript 重寫版</strong>（<code>extension/src/core/</code>）。兩套實作必須對同一份輸入給出<strong>相同結果</strong> —— 否則同一段文字在擴充裡被遮、在 proxy 裡沒被遮，使用者無所適從。</p>
+      <div class="tbl-scroll">
+        <table>
+          <thead><tr><th>測試檔</th><th>在驗什麼</th></tr></thead>
+          <tbody>
+            <tr><td><code>parity.test.ts</code></td><td>兩套實作結果一致</td></tr>
+            <tr><td><code>known_divergence.test.ts</code></td><td><b>誠實記錄目前已知不一致的地方</b> —— 不是假裝沒有</td></tr>
+            <tr><td><code>placeholder.test.ts</code></td><td>佔位符格式與編號規則</td></tr>
+            <tr><td><code>latency.test.ts</code></td><td>貼上時的延遲</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>怎麼裝來玩</h2>
+      <pre><code>cd extension
+npm install
+npm run build
+
+→ 開 chrome://extensions
+→ 右上角開啟「開發人員模式」
+→ 點「載入未封裝項目」，選 extension/dist</code></pre>
+      <p>裝好之後兩種用法：<b>點工具列圖示</b>開 popup 直接貼文字看結果（最快的 demo 方式，不用開任何 AI 網站）；或到 <b>ChatGPT / Claude / Gemini</b> 的輸入框 Ctrl+V。</p>
+    </section>
+
+    <section class="card">
+      <h2>還沒做的：兩套實作並排比對</h2>
+      <p>這一頁真正該有的東西，是<strong>同一段文字左邊跑 Python 版、右邊跑 TypeScript 版</strong>的即時對照 —— 那才是把「跨語言一致性」講清楚的方式，評審一定會問。</p>
+      <p class="note">需要 C 提供編譯後的 JS，並且確認要不要這樣展示。<b>已在 issue #31 詢問（含語意層白名單同步的問題），尚未收到回覆。</b></p>
+    </section>
+  </div>
+
+  <div class="panel" id="panel-status" hidden>
+    <section class="card">
+      <h2>現況總覽 <span class="hint">proxy 目前的設定與真實流量</span></h2>
+      <dl class="status" id="status"><div><dt>載入中</dt><dd class="off">…</dd></div></dl>
+      <p class="note" id="statusNote"></p>
+    </section>
+    <section class="card">
+      <h2>怎麼看這些數字</h2>
+      <ul>
+        <li><b>agent 流量</b> —— 用來確認「流量真的有走 proxy」。設定沒生效時 agent 會安靜地直連雲端，畫面上不會有任何提示，這個數字停在 0 就是唯一線索。</li>
+        <li><b>對照表（實際）</b> —— agent 正在用的那張表裡有幾個不重複的真值。閒置 30 分鐘會自動清空。</li>
+        <li><b>偵測快取</b> —— agent 每輪都重送整段歷史，同一份內容會被重複掃十幾次。命中率越高代表省下越多重複運算。</li>
+        <li><b>語意層</b> —— 未啟用時姓名與地址不會被偵測到，這是預期行為。</li>
+      </ul>
+    </section>
+  </div>
+
+  <footer>
+    tw-pii-filter · 本機示範介面 · 需 <code>PII_ENABLE_DEMO=1</code> 才會啟用，不參與轉發
+  </footer>
+</div>
+
+<script>
+const SAMPLES = {
+  crm: `客服紀錄 2026-03-14
+客戶 林秉軒，身分證 A123456789，手機 0912-345678
+地址：台北市中山區民生東路二段141號
+備註：35 歲男性，資深後端工程師，希望改用 email 聯絡`,
+  code: `CUSTOMERS = [
+    {"id": 1, "name": "林秉軒", "id_number": "A123456789", "phone": "0912-345678"},
+    {"id": 2, "name": "陳雅婷", "id_number": "F131104093", "phone": "0923-456789"},
+]
+
+# TODO: 匯出前記得過濾 id_number 欄位`,
+  error: `Traceback (most recent call last):
+  File "billing.py", line 88, in charge
+    stripe.Charge.create(card="4111111111111111", api_key="sk-proj-AbCdEf1234567890XyZaBcDeFgHiJkL")
+requests.HTTPError: 402 for user peter0905@example.com (統編 12345675)`,
+  combo: `這位客戶是 35 歲的女性，住在新竹市東區，
+在園區某間半導體公司擔任資深製程工程師，
+上週來電詢問合約續約事宜。`
+};
+
+const $ = (id) => document.getElementById(id);
+const esc = (s) => s.replace(/[&<>"]/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+document.querySelectorAll('nav.tabs button').forEach((tab) => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('nav.tabs button').forEach((t) => t.setAttribute('aria-selected', String(t === tab)));
+    ['try', 'what', 'ext', 'status'].forEach((name) => {
+      $('panel-' + name).hidden = (name !== tab.dataset.tab);
+    });
+    if (tab.dataset.tab === 'status') loadStatus();
+  });
+});
+
+document.querySelectorAll('[data-sample]').forEach((b) => {
+  b.addEventListener('click', () => { $('input').value = SAMPLES[b.dataset.sample]; scan(); });
+});
+$('clearBtn').addEventListener('click', () => { $('input').value = ''; $('input').focus(); });
+$('scanBtn').addEventListener('click', scan);
+$('resetBtn').addEventListener('click', async () => {
+  await fetch('/demo/reset', { method: 'POST' });
+  $('hint').textContent = '對照表已清空，編號從 1 重新開始';
+  scan();
+});
+$('input').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) scan();
+});
+
+function highlight(text, spans) {
+  let out = '', cursor = 0;
+  [...spans].sort((a, b) => a.start - b.start).forEach((s) => {
+    if (s.start < cursor) return;
+    out += esc(text.slice(cursor, s.start));
+    const cls = s.skipped ? 'skip' : '';
+    const title = s.skipped ? `${s.type}（偵測到，但依設定不遮蔽）` : `${s.type} → ${s.token}`;
+    out += `<mark class="${cls}" title="${esc(title)}">${esc(s.text)}</mark>`;
+    cursor = s.end;
+  });
+  return out + esc(text.slice(cursor));
+}
+
+function markTokens(text) {
+  return esc(text).replace(/\[([A-Z_]+)_(\d+)\]/g, (m) => `<span class="tok">${m}</span>`);
+}
+
+async function scan() {
+  const text = $('input').value;
+  const hideAll = () => ['resultCard', 'spansCard', 'riskCard', 'mapCard', 'restoreCard'].forEach((id) => { $(id).hidden = true; });
+  if (!text.trim()) { hideAll(); return; }
+
+  const res = await fetch('/demo/scan', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text })
+  });
+  if (!res.ok) { $('hint').textContent = '掃描失敗：' + res.status; return; }
+  const d = await res.json();
+
+  $('resultCard').hidden = false;
+  $('origBody').innerHTML = highlight(text, d.spans);
+  $('maskBody').innerHTML = markTokens(d.masked);
+
+  const total = Object.values(d.counts).reduce((a, b) => a + b, 0);
+  const detail = Object.entries(d.counts).map(([t, n]) => `${t} x${n}`).join('、') || '無';
+  // 每一項各自包一個 span：`.metrics` 是 flex 容器，若全部串成一個字串就只會是
+  // 一個 flex 子元素，gap 不會生效、各項會黏在一起（實測撞到）
+  $('metrics').innerHTML = [
+    `遮蔽 <b>${total}</b> 處（${detail}）`,
+    `偵測 <b>${d.timing.detect_ms}</b> ms`,
+    `替換 <b>${d.timing.mask_ms}</b> ms`,
+    `快取命中率 <b>${Math.round(d.cache.hit_rate * 100)}%</b>`
+  ].map((m) => `<span>${m}</span>`).join('');
+
+  $('spansCard').hidden = d.spans.length === 0;
+  $('spansBody').innerHTML = d.spans.map((s) => {
+    const src = s.source === 'rule' ? '<span class="pill rule">規則層</span>' : '<span class="pill ner">語意層</span>';
+    const token = s.skipped ? '<span class="pill skip">不遮蔽</span>' : `<span class="tok">${esc(s.token)}</span>`;
+    const conf = s.confidence == null ? '—' : Number(s.confidence).toFixed(2);
+    return `<tr><td><b>${esc(s.type)}</b></td><td>${src}</td><td class="mono">${s.start}–${s.end}</td><td>${token}</td><td class="mono">${conf}</td></tr>`;
+  }).join('');
+  $('spansNote').textContent = d.ner_enabled
+    ? `不遮蔽的型別：${d.skip_types.join('、') || '無'}（偵測得到，但依設定保留原文，仍會計入組合風險）`
+    : `語意層未啟用，因此姓名與地址不會被偵測到 —— 目前只有規則層在跑。不遮蔽的型別：${d.skip_types.join('、') || '無'}`;
+
+  const r = d.risk;
+  if (r && r.score > 0) {
+    $('riskCard').hidden = false;
+    const warn = r.score >= 0.6;
+    $('riskBox').className = 'risk' + (warn ? ' warn' : '');
+    $('riskBox').innerHTML =
+      `<span class="score">${r.score.toFixed(2)}</span>` +
+      `<span class="meter"><i style="width:${Math.round(r.score * 100)}%"></i></span>` +
+      `<span class="lv">${esc(r.risk_level)}　準識別子：${r.contributing_types.map(esc).join('、') || '無'}</span>`;
+    $('riskSugg').innerHTML = (r.suggestions || []).map((s) => `<li>${esc(s)}</li>`).join('');
+  } else {
+    $('riskCard').hidden = true;
+  }
+
+  $('mapCard').hidden = d.mapping.length === 0;
+  $('mapBody').innerHTML = d.mapping.map((m) =>
+    `<tr><td><span class="tok">${esc(m.token)}</span></td><td class="mono">${esc(m.value)}</td></tr>`
+  ).join('');
+
+  // 回程：預先填一段用得到剛剛那些佔位符的假回覆
+  $('restoreCard').hidden = d.mapping.length === 0;
+  if (d.mapping.length) {
+    const tokens = d.mapping.map((m) => m.token);
+    $('replyInput').value =
+      `我看了你提供的資料。第一筆的識別碼是 ${tokens[0]}` +
+      (tokens[1] ? `，聯絡方式是 ${tokens[1]}。` : '。') +
+      `\n建議你在匯出前先過濾這些欄位。`;
+    $('restoreResult').hidden = true;
+    $('restoreMetrics').innerHTML = '';
+    $('restoreNote').textContent = '';
+  }
+
+  loadStatus();
+}
+
+$('restoreBtn').addEventListener('click', restore);
+$('hallucinateBtn').addEventListener('click', () => {
+  $('replyInput').value += '\n（另外提一下 [TW_ID_9]，這個佔位符我們從來沒發過。）';
+  restore();
+});
+
+async function restore() {
+  const text = $('replyInput').value;
+  if (!text.trim()) return;
+  const res = await fetch('/demo/restore', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text })
+  });
+  if (!res.ok) return;
+  const d = await res.json();
+
+  $('restoreResult').hidden = false;
+  $('replyBody').innerHTML = markTokens(text);
+  // 還原後仍留著的佔位符 = 查不到的，標紅
+  $('restoredBody').innerHTML = esc(d.restored_text)
+    .replace(/\[([A-Z_]+)_(\d+)\]/g, (m) => `<span class="tok unknown">${m}</span>`);
+
+  $('restoreMetrics').innerHTML = [
+    `還原 <b>${d.restored}</b> 處`,
+    `查不到 <b>${d.unknown}</b> 處`,
+    `耗時 <b>${d.timing.restore_ms}</b> ms`
+  ].map((m) => `<span>${m}</span>`).join('');
+
+  $('restoreNote').textContent = d.unknown > 0
+    ? '紅色的是對照表裡查不到的佔位符 —— 雲端 AI 有可能自己編出沒發過的號碼（幻覺）。這種一律原樣保留，絕不猜測：猜錯等於憑空捏造一筆個資塞進你的內容裡。'
+    : '所有佔位符都換回真值了。真實運作時這一步發生在 SSE 串流上，佔位符可能被切在兩個封包之間，還原器要邊收邊判斷什麼時候可以安全放行。';
+}
+
+async function loadStatus() {
+  const res = await fetch('/demo/status');
+  if (!res.ok) return;
+  const s = await res.json();
+  const cell = (label, value, cls) => `<div><dt>${label}</dt><dd class="${cls || ''}">${value}</dd></div>`;
+  const t = s.traffic;
+  $('status').innerHTML = [
+    cell('上游', s.upstream_configured ? '已設定' : '未設定', s.upstream_configured ? 'on' : 'off'),
+    cell('預設模型', esc(s.model)),
+    cell('語意層', s.ner_enabled ? '已啟用' : '未啟用（僅規則層）', s.ner_enabled ? 'on' : 'off'),
+    cell('組合風險', s.risk_warning_enabled ? '已啟用' : '未啟用', s.risk_warning_enabled ? 'on' : 'off'),
+    cell('agent 流量', t.requests + ' 次', t.requests > 0 ? 'on' : 'off'),
+    cell('對照表（實際）', s.live_mapping_entries + ' 筆'),
+    cell('偵測快取', Math.round(s.live_cache.hit_rate * 100) + '%'),
+    cell('不遮蔽型別', s.skip_types.join('、') || '無')
+  ].join('');
+  $('statusNote').textContent = t.requests === 0
+    ? 'agent 流量 0 次代表還沒有任何 agent 連過來 —— 這一欄是用來確認「流量真的有走 proxy」的。'
+    : `最近一次 agent 請求：${t.last_at}（${t.seconds_since_last} 秒前）`;
+}
+
+loadStatus();
+</script>
+</body>
+</html>
