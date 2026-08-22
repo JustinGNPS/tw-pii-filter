@@ -653,7 +653,7 @@ MITM 必須在使用者機器安裝一張根憑證。那張憑證一旦存在，
 | OpenCode | `opencode.json` 自訂 provider（`@ai-sdk/openai-compatible`） | function calling | **已實測通過**（過程中挖出並修好還原機制的一個洞，見下） |
 | Continue | `~/.continue/config.yaml` 自訂 `provider: openai` + `apiBase` | function calling | **已實測通過**（再次驗證 tool_calls 還原修復不是只對 OpenCode 有效） |
 | Cline | GUI 設定選 **OpenAI Compatible**，填 Base URL/API Key/Model | function calling | **已實測通過**（第三款驗證同一個修復） |
-| Codex | `config.toml` 自訂 provider（`wire_api = "responses"`） | **Responses API**（`POST /v1/responses`，欄位結構完全不同） | **已實測通過**（遮蔽與還原兩側原本都靜默失效，見下；agent 主動寫檔那條路徑只有單元測試涵蓋） |
+| Codex | `config.toml` 自訂 provider（`wire_api = "responses"`） | **Responses API**（`POST /v1/responses`，欄位結構完全不同） | **已實測通過**（遮蔽與還原兩側原本都靜默失效，見下；**寫檔路徑 08-22 補驗完成**，見下方註記） |
 | Claude Code | `ANTHROPIC_BASE_URL` | Anthropic Messages API（欄位結構完全不同，另有協定翻譯層） | **已實測通過**（純文字對話 + 工具呼叫，含真串流；圖片/文件附件尚未支援，見下） |
 | **Cursor** | — | 廠商代管後端，無自訂位址欄位 | **不支援**（見上「BYOK vs. 代管帳號」） |
 
@@ -767,6 +767,33 @@ Codex CLI 走 **Responses API**（`POST /v1/responses`）。好消息是**上游
 （實測反例：問「`A123456789` 有幾個字元」，答 10 就是看到真值，遮蔽後應該是
 9 個字元的 `[TW_ID_1]`）。
 
+#### 寫檔路徑：08-22 補驗完成（結論分兩半）
+
+合併 PR #29 時，「agent 主動寫檔」那條路徑只有單元測試涵蓋。08-22 用真 Codex
+（`gpt-4.1`、純規則層）補驗，**通過的部分**：
+
+| 項目 | 證據 |
+|---|---|
+| 請求側從 `function_call_output` 挖出檔案內容並遮蔽 | 兩輪在 agent 讀檔後都印「已遮蔽：6 筆（`TW_ID` x3、`TW_PHONE_M` x3）」 |
+| 回覆側 `function_call_arguments.delta` 還原 | 7 次還原事件 |
+| **還原後的真值寫進磁碟、讀回來零佔位符** | 模型寫出 `temp_patch.diff`，`cat` 回來是 `return "A123456789"` |
+| 效能 | 遮蔽 1.6〜5.8 ms；快取命中率 57% → 87%；對照表 6 個不重複值 |
+
+**最硬的一條是閉環**：agent 把自己剛寫出的檔案讀回來時，規則層在裡面**又多抓到
+一個 `TW_ID`**（16 筆 → 17 筆）。若還原失效、落到磁碟的是 `[TW_ID_1]`，偵測器
+不可能多抓到這一筆 —— 佔位符不會被判成身分證。這比「log 說還原了 N 筆」更可信，
+因為它是從**磁碟上實際的位元組**倒推回來的。
+
+**沒通過的部分（誠實記錄）**：內容始終沒進到任務指定的那個檔案，該檔 sha256
+從頭到尾與基準線相同。原因與 proxy 無關 —— 模型在 Windows 上拼不出合法的
+PowerShell（`&&` 不是合法分隔符、`echo ... ()` 解析錯誤、`"""` 被當成參考運算子）。
+**而且兩輪最後模型都回報「已成功新增」，兩次都是假的**（08-16 在 `gpt-4.1-mini`
+上看到的現象重現）—— **agent 回報成功 ≠ 真的做了，一律以 sha256 為準。**
+
+刻意**不跑第三次**：驗收條件的實質內容已達成，再跑只是賭模型會不會突然會用
+PowerShell。為了讓檔名剛好對而重跑到成功為止，會讓報告出現一個看起來漂亮、
+實際上是選擇性呈現的數字。
+
 **Codex 同時具備兩種模式，強化了限制 2 的論述**：Codex 預設用 ChatGPT 帳號登入
 （廠商代管後端，攔不到），只有自訂 provider（BYOK）模式才攔得下來。這比 Cursor
 更有說服力——**同一個工具**、同一套程式碼，差別只在認證方式。這證明判準不是
@@ -822,13 +849,15 @@ detect_ner(text))`，由 `PII_ENABLE_NER` 控制是否啟用。
 | 項目 | 說明 |
 |---|---|
 | 共用模組的位置 | 見「對 C」，尚未有結論 |
-| 其他 agent 實測 | 見相容性表，**只剩 Codex 未測**（Aider／OpenCode／Continue／Cline／Claude Code 均已實測通過）；測之前先確認它走 `tool_calls` 還是別的欄位結構 |
+| Claude Code 的圖片／文件附件 | `image`/`document` block 還不會翻譯，遇到誠實回報「還沒支援」。要不要做取決於 demo 需不需要 |
 | `detect_all().combination_risk` 與載體自算的關係 | A 在 PR #24 讓 `detect_all()` 回傳原文的組合風險，proxy 則另外算遮蔽後的殘餘風險，同一段文字兩個數字不同（1.00 vs 0.70）。已在 PR #25 請 A 裁示，見決定 12 |
+
+~~其他 agent 實測~~ —— 已解決：相容性表上六款（Aider／OpenCode／Continue／Cline／Codex／Claude Code）全部實測通過，Cursor 誠實列為不支援。
 
 ~~語意層接入後的效能~~ —— 已解決，見決定 10 與限制 3。
 ~~對照表作用域要不要跟 C 對齊~~ —— 已解決，見決定 3 的後續驗證，結論是不對齊，兩個載體回答的問題本來就不同。
 ~~`bert-base-chinese` 的 512 token 上限~~ —— 已解決，D 加入分段處理修好截斷問題，見決定 10。
-~~對照表清除時機~~ —— **決定已定案，見決定 11**（閒置逾時清除），`clear()` 尚未實際接線，留待之後實作。
+~~對照表清除時機~~ —— 已解決，見決定 11（閒置逾時清除）。**已實作並接線**：`proxy/main.py` 建表時傳入 `idle_timeout=config.MAPPING_IDLE_TIMEOUT`（預設 1800 秒，`PROXY_MAPPING_IDLE_TIMEOUT` 可調、設 `0` 停用），啟動摘要會印出目前設定值。
 ~~組合風險分數要怎麼呈現給使用者~~ —— 已解決，見決定 12：記 log、不進 `/healthz`、只提示不遮蔽。
 ~~MITM／網路層攔截能不能救代管帳號~~ —— 已解決，見限制 4：**不做**，四個理由各自都足以否決，其中憑證釘選與「要求使用者裝根憑證」是死結。
 ~~檔案級遮蔽這條路~~ —— 已解決，見限制 5：可行且合法，但保護範圍更小、把成本轉嫁給使用者，因此不採用為主架構；若日後要支援 Cursor 這類代管 agent，它是唯一合法的路，可當補充模式並存。
