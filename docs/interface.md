@@ -53,6 +53,8 @@ detect(text: str) -> dict
 
 ## 類別代碼（`type`）
 
+### 規則層（8 種）
+
 | 代碼 | 說明 |
 |---|---|
 | `TW_ID` | 台灣身分證字號 |
@@ -63,6 +65,92 @@ detect(text: str) -> dict
 | `EMAIL` | 電子郵件地址 |
 | `CREDIT_CARD` | 信用卡號 |
 | `API_KEY` | API 金鑰 |
+
+規則層有正則與檢核碼驗證，**不受下面語意層的過濾機制影響**，一律照常偵測。
+
+### 語意層（NER）：三層要分清楚
+
+語意層的型別代碼**有三個不同的集合，數量不一樣**。看文件或讀程式時務必確認
+自己講的是哪一層 —— 混淆這三層正是 PR #28 修掉的那個問題的成因。
+
+#### 第 1 層：模型原始標籤（14 種）
+
+語意層用的 `gyr66/bert-base-chinese-finetuned-ner` 是**通用領域**中文 NER 模型，
+訓練標籤共 14 種（用 `python core/ner/get_model_labels.py` 可查）：
+
+```
+QQ, address, book, company, email, game, government,
+mobile, movie, name, organization, position, scene, vx
+```
+
+模型原生輸出是**小寫**，經 `proxy/mapping.normalize_type()` 正規化為大寫。
+
+#### 第 2 層：系統實際採信的型別（白名單 4 種）
+
+```
+NAME, ADDRESS, POSITION, COMPANY
+```
+
+由 `proxy/config.py` 的 `NER_ALLOW_TYPES` 控制（環境變數 `PII_NER_ALLOW_TYPES`，
+預設即這 4 種）。過濾發生在 `proxy/detector.py::_keep_allowed_types()`，位置在
+`detect_all(extra_spans=...)` 的**上游** —— 白名單外的 span 從一開始就不存在，
+不參與 Layer 4 仲裁、不計入 log 筆數、不計入組合風險分數。
+
+**下游能拿到的語意層 `type` 只有這 4 種。**
+
+#### 第 3 層：被排除的雜訊型別（其餘 10 種）
+
+```
+QQ, BOOK, EMAIL, GAME, GOVERNMENT, MOBILE, MOVIE, ORGANIZATION, SCENE, VX
+```
+
+排除的理由是**實測**，不是預設立場：通用領域中文模型拿去掃 agent 送來的**英文
+技術文字**（system prompt、程式碼、工具說明）時，產出的幾乎全是雜訊。用真實
+Claude Code 請求（36,428 字元）實測，語意層在它自己的 system prompt 上判出：
+
+```
+GAME         x6   'here'  'ollama'  '—'  'MEMORY'  '`'  'Environment\nYou'
+ORGANIZATION x2   'mistral'  '`'
+```
+
+**一個反引號被判成 `GAME`、遮成佔位符送給上游。** 這不是隱私問題（那些本來就
+不是個資），是**功能損害**：agent 的系統提示被挖洞，行為會受影響。
+
+排除動作發生在兩個地方：
+
+| 型別 | 在哪裡被丟掉 | 原因 |
+|---|---|---|
+| `EMAIL`、`MOBILE` | `core/ner/detector.py` 的 `EXCLUDED_TYPES`（PR #26） | 語意層對這兩種只抓得到破碎片段（單獨的 `@`、單獨的 `.com`），規則層用正則處理得又快又準 |
+| 其餘 8 種 | `proxy/detector.py` 的白名單過濾（PR #28） | 通用領域標籤，與個人身分無關 |
+
+### 為什麼要分三層寫
+
+**因為這個專案有 11 天的時間都以為語意層只有 4 種標籤**（`NAME`/`ADDRESS`/
+`POSITION`/`COMPANY`），直到 2026-08-14 才去核對模型本身，才發現實際有 14 種
+（PR #28）。那 11 天裡多出來的 10 種標籤是**靜默生效**的：它們照常被偵測、
+照常被遮蔽，只是沒有人知道。
+
+把三層分開寫死在這裡，是為了讓之後接手或換模型的人不會重蹈覆轍：
+
+- 只看到第 2 層的人，會以為模型只認得 4 種標籤，換模型時不會想到要重新核對標籤集
+- 只看到第 1 層的人，會以為下游拿得到 14 種型別，寫出永遠不會被觸發的分支
+- 用**白名單**而不是黑名單，就是因為黑名單要求我們預先知道模型的所有標籤 ——
+  白名單在日後換模型、模型改標籤集時都不會被新標籤偷襲
+
+**換模型時的檢查清單**：跑 `core/ner/get_model_labels.py` 取得新模型的完整標籤集
+→ 更新本節第 1 層 → 決定哪些進白名單 → 更新 `DEFAULT_NER_ALLOW_TYPES` → 更新本節
+第 2、3 層。
+
+### ⚠️ 已知不一致：組合風險評分認得的型別比白名單多
+
+`core/risk/combination_risk.py` 的 `QUASI_IDENTIFIER_TYPES` 包含
+`ORGANIZATION`、`GOVERNMENT`、`SCENE`（見下方「準識別子的來源」），但這三種都在
+第 3 層、會被白名單擋掉，**在 proxy 這條路徑上永遠不會出現在 `spans` 裡**，
+因此它們的權重與建議文字目前是死碼。
+
+這不是 bug，是兩個決定先後做出來的結果（組合風險評分先，白名單後），但如果之後
+有人想讓機構名稱參與組合風險評分，要**同時**把它加進 `PII_NER_ALLOW_TYPES`，
+只改 `combination_risk.py` 不會有任何效果。
 
 ## 範例
 
@@ -172,6 +260,9 @@ Layer 1（規則層）與 Layer 2（語意層）抓的是「明確的個資」�
 
 - **語意層 spans**：`ADDRESS` / `POSITION` / `COMPANY` / `ORGANIZATION` / `GOVERNMENT` / `SCENE`——來自 `extra_spans`（Layer 2 語意層結果），`compute_combination_risk` 直接檢查 Layer 4 仲裁後的 `spans` 裡有沒有這些型別
 - **獨立正則偵測**：`AGE` / `GENDER`——語意層模型沒有對應標籤，`compute_combination_risk` 自己對 `text` 做正則/關鍵字掃描，不需要透過 `spans` 帶入
+
+> ⚠️ `ORGANIZATION` / `GOVERNMENT` / `SCENE` 這三種雖然列在這裡，但已被語意層白名單
+> 排除（見上方「類別代碼」第 3 層），在 proxy 路徑上永遠不會出現在 `spans` 裡。
 
 因此若呼叫 `detect_all(text)` 時沒有傳入 `extra_spans`（未接語意層），`contributing_types` 只可能包含 `AGE`/`GENDER`；要看到 `ADDRESS`/`POSITION` 這類準識別子造成的風險，呼叫端必須先把語意層（`core.ner.detect_ner()`）的結果當 `extra_spans` 傳入。
 
