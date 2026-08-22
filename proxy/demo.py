@@ -134,6 +134,36 @@ async def scan(payload: dict) -> dict:
     }
 
 
+@router.post("/restore")
+async def restore(payload: dict) -> dict:
+    """把一段含佔位符的文字換回真值 —— 示範「回程」那一半。
+
+    真實運作時這是 agent 收到雲端回覆時發生的事。這裡讓使用者自己打一段
+    「假的 AI 回覆」，就能在完全不呼叫上游的情況下把整個循環走完：
+
+        你打的 -> 遮蔽後（雲端看到的）-> 模擬 AI 回覆 -> 還原後（你看到的）
+
+    `unknown` 是**查不到對應真值**的佔位符數量。雲端 AI 可能自己編出沒發過的
+    佔位符（幻覺），那種一律**原樣保留、絕不猜測**（見 docs/B_design.md 決定 5）
+    —— 猜測等同於憑空捏造一筆個資塞進使用者的內容裡。
+    """
+    _require_enabled()
+    text = (payload or {}).get("text") or ""
+    if not isinstance(text, str):
+        raise HTTPException(status_code=400, detail="text 必須是字串")
+
+    started = time.perf_counter()
+    restored_text, restored, unknown = DEMO_TABLE.restore_text(text)
+    elapsed = (time.perf_counter() - started) * 1000
+
+    return {
+        "restored_text": restored_text,
+        "restored": restored,
+        "unknown": unknown,
+        "timing": {"restore_ms": round(elapsed, 3)},
+    }
+
+
 @router.post("/reset")
 async def reset() -> dict:
     """清空示範用的對照表，讓佔位符號碼從 1 重新開始。

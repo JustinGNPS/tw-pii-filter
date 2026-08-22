@@ -161,3 +161,45 @@ def test_status_回報的是真實設定(on, monkeypatch):
     assert data["model"] == "gpt-4.1-mini"
     assert data["ner_enabled"] is False
     assert "requests" in data["traffic"]
+
+
+# ---------------------------------------------------------------- 還原（回程）
+
+
+def test_還原把佔位符換回真值(on):
+    on.post("/demo/scan", json={"text": SAMPLE})
+
+    data = on.post(
+        "/demo/restore", json={"text": "客戶 [TW_ID_1] 的電話是 [TW_PHONE_M_1]"}
+    ).json()
+
+    assert data["restored_text"] == "客戶 A123456789 的電話是 0912-345678"
+    assert data["restored"] == 2
+    assert data["unknown"] == 0
+
+
+def test_查不到的佔位符原樣保留而不是猜(on):
+    """雲端 AI 可能自己編出沒發過的佔位符（幻覺）。
+
+    猜測等同於憑空捏造一筆個資塞進使用者的內容裡 —— 一律原樣保留，
+    並回報 `unknown` 讓呼叫端看得見（見 docs/B_design.md 決定 5）。
+    """
+    on.post("/demo/scan", json={"text": SAMPLE})
+
+    data = on.post("/demo/restore", json={"text": "另外 [TW_ID_9] 是我編的"}).json()
+
+    assert "[TW_ID_9]" in data["restored_text"]
+    assert data["restored"] == 0
+    assert data["unknown"] == 1
+
+
+def test_還原用的是示範那張表(on):
+    """沒掃過任何東西時什麼都還原不了 —— 證明它讀的不是 agent 那張表。"""
+    data = on.post("/demo/restore", json={"text": "[TW_ID_1]"}).json()
+
+    assert data["restored"] == 0
+    assert data["unknown"] == 1
+
+
+def test_關閉時還原端點也是404(off):
+    assert off.post("/demo/restore", json={"text": "[TW_ID_1]"}).status_code == 404
