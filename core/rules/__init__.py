@@ -5,6 +5,7 @@ from core.rules.api_key import detect_api_key, is_valid_api_key
 from core.rules.conflict_resolver import renumber_replacements, resolve_overlaps
 from core.rules.credit_card import detect_credit_card, is_valid_credit_card
 from core.rules.email import detect_email, is_valid_email
+from core.rules.normalize import normalize_fullwidth
 from core.rules.tw_id import detect_tw_id, is_valid_tw_id
 from core.rules.tw_nhi import detect_tw_nhi, is_valid_tw_nhi
 from core.rules.tw_phone_l import detect_tw_phone_l, is_valid_tw_phone_l
@@ -20,6 +21,7 @@ __all__ = [
     "is_valid_credit_card",
     "detect_email",
     "is_valid_email",
+    "normalize_fullwidth",
     "detect_tw_id",
     "is_valid_tw_id",
     "detect_tw_nhi",
@@ -63,9 +65,16 @@ def detect_all(text: str, extra_spans: list = None) -> dict:
     `docs/layer3_spec.md`），依 Layer 4 仲裁後的 spans 計算；沒有組合風險
     （score 為 0，即準識別子共現數 < 2）時為 `None`，屬選填欄位。
     """
+    # 全形 ASCII 英數字正規化：讓正則可以比對到全形寫法（如「０９１２…」、「ａｂｃ@…」）。
+    # normalize_fullwidth 只映射 U+FF10-FF19/FF21-FF3A/FF41-FF5A，保證 1:1 等長，
+    # 偵測到的 span 座標可以直接套用回原始 text。
+    normalized = normalize_fullwidth(text)
     spans = []
     for detector in _DETECTORS:
-        spans.extend(detector(text)["spans"])
+        spans.extend(detector(normalized)["spans"])
+    # span["text"] 來自正規化文字，換回原始字元
+    for span in spans:
+        span["text"] = text[span["start"]:span["end"]]
 
     if extra_spans:
         spans.extend(extra_spans)
