@@ -35,6 +35,7 @@ from proxy import (
     masker,
     restorer,
     risk,
+    traffic,
 )
 from proxy.mapping import MappingTable
 
@@ -65,6 +66,12 @@ async def lifespan(app: FastAPI):
         logger.warning(forward.MISSING_UPSTREAM_MESSAGE)
     if not config.UPSTREAM_API_KEY:
         logger.warning("找不到上游金鑰，轉發一定會失敗。請確認 .env 內的變數名稱。")
+    # agent 沒指到 proxy 時不會有任何跡象（見 proxy/traffic.py），
+    # 所以先講明該看什麼，使用者才知道「沒出現那一行」代表什麼
+    logger.info(
+        "尚未收到任何請求。agent 開始工作後這裡會印一行「第一個請求已抵達 proxy」；"
+        "若始終沒出現，代表流量沒有走這裡（agent 的 base URL 沒指過來）。"
+    )
     if config.ENABLE_NER:
         # core/ner/detector.py 的 `_get_detector()` 單例目前沒有鎖（C 在 PR #11
         # review 抓到：`asyncio.to_thread` 讓多個請求可能真的並行進 thread pool，
@@ -121,7 +128,22 @@ async def healthz() -> dict:
         "ner_enabled": config.ENABLE_NER,
         "mapping_entries": len(app.state.mapping),
         "detection_cache": detector.CACHE.stats(),
+        "traffic": traffic.STATS.snapshot(),
     }
+
+
+def _record_arrival(method: str, path: str) -> None:
+    """記一次「請求真的抵達 proxy」，第一次額外印一行。
+
+    只在轉發路徑上呼叫，`/healthz` 不算 —— 使用者自己 curl 健康檢查不代表
+    agent 走了 proxy，把它算進去會讓這個數字失去意義。
+    """
+    if traffic.STATS.record():
+        logger.info(
+            "第一個請求已抵達 proxy（%s /%s）—— 流量確實有走這裡",
+            method,
+            path.lstrip("/"),
+        )
 
 
 def _log_combination_risk(combination_risk: dict | None) -> None:
@@ -170,6 +192,7 @@ def _mask_request(path: str, body: bytes, table: MappingTable) -> tuple[bytes, f
 
 
 async def _proxy(path: str, request: Request) -> Response:
+    _record_arrival(request.method, path)
     table: MappingTable = request.app.state.mapping
     body = await request.body()
     body, detect_ms = await asyncio.to_thread(_mask_request, path, body, table)
@@ -565,6 +588,7 @@ def _has_tool_result(payload: dict) -> bool:
 
 @app.post("/v1/messages")
 async def anthropic_messages(request: Request) -> Response:
+    _record_arrival("POST", "v1/messages")
     if _CAPTURE_ANTHROPIC:
         return await _capture_anthropic_messages(request)
     return await _proxy_anthropic(request)
