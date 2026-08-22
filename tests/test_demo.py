@@ -203,3 +203,77 @@ def test_還原用的是示範那張表(on):
 
 def test_關閉時還原端點也是404(off):
     assert off.post("/demo/restore", json={"text": "[TW_ID_1]"}).status_code == 404
+
+
+# ---------------------------------------------------------------- 即時監看
+
+
+def test_事件流會記下轉發與遮蔽(on, monkeypatch):
+    """agent 的每個請求都要在事件流裡留下痕跡 —— 那是「即時監看」的資料來源。"""
+    import httpx
+    import respx
+
+    from proxy import traffic
+
+    traffic.EVENTS.clear()
+    with respx.mock:
+        respx.post("https://upstream.test/v1/chat/completions").mock(
+            return_value=httpx.Response(200, json={"ok": True})
+        )
+        on.post(
+            "/v1/chat/completions",
+            json={
+                "model": "gpt-4.1-mini",
+                "messages": [{"role": "user", "content": "id A123456789"}],
+            },
+        )
+
+    data = on.get("/demo/events").json()
+    kinds = [e["kind"] for e in data["events"]]
+
+    assert "mask" in kinds  # 遮蔽到新個資
+    assert "done" in kinds  # 請求完成
+    assert data["last_id"] >= 2
+
+
+def test_事件不含任何原始個資(on):
+    """紅線：這個緩衝區會透過 HTTP 端點暴露出去，記了原文就是一份個資快取。"""
+    import httpx
+    import respx
+
+    from proxy import traffic
+
+    traffic.EVENTS.clear()
+    with respx.mock:
+        respx.post("https://upstream.test/v1/chat/completions").mock(
+            return_value=httpx.Response(200, json={"ok": True})
+        )
+        on.post(
+            "/v1/chat/completions",
+            json={
+                "model": "gpt-4.1-mini",
+                "messages": [{"role": "user", "content": "id A123456789 tel 0912-345678"}],
+            },
+        )
+
+    body = on.get("/demo/events").text
+
+    assert "A123456789" not in body
+    assert "0912" not in body
+
+
+def test_since_只拿新的部分(on):
+    from proxy import traffic
+
+    traffic.EVENTS.clear()
+    for i in range(5):
+        traffic.EVENTS.record("done", status=200)
+
+    data = on.get("/demo/events?since=3").json()
+
+    assert [e["id"] for e in data["events"]] == [4, 5]
+    assert data["last_id"] == 5
+
+
+def test_關閉時事件端點也是404(off):
+    assert off.get("/demo/events").status_code == 404

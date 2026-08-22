@@ -167,6 +167,7 @@
   <nav class="tabs" role="tablist">
     <button role="tab" data-tab="try" aria-selected="true">試打台</button>
     <button role="tab" data-tab="what" aria-selected="false">功能與流程</button>
+    <button role="tab" data-tab="live" aria-selected="false">即時監看</button>
     <button role="tab" data-tab="ext" aria-selected="false">瀏覽器擴充</button>
     <button role="tab" data-tab="status" aria-selected="false">現況總覽</button>
   </nav>
@@ -380,6 +381,38 @@ set PII_ENABLE_NER=1</code></pre>
     </section>
   </div>
 
+  <div class="panel" id="panel-live" hidden>
+    <section class="card">
+      <h2>即時監看 <span class="hint">一邊跑 agent，一邊看 proxy 背景在做什麼</span></h2>
+      <p class="note">
+        把這一頁跟你的終端機並排放。agent 每送一次請求，下面就多幾行 ——
+        遮蔽到什麼新個資、還原了幾處、上游花多久。這些資訊平常只存在於終端機的
+        log 裡，一洗過去就沒了。
+      </p>
+      <div class="row">
+        <button class="btn primary" id="liveToggle">開始監看</button>
+        <button class="btn" id="liveClear">清空畫面</button>
+        <span class="note spacer" id="liveState">未啟動</span>
+      </div>
+      <dl class="status" id="liveStats"><div><dt>尚未開始</dt><dd class="off">—</dd></div></dl>
+      <p class="note" id="liveHint">
+        <b>流量 0 次代表 agent 根本沒連過來</b> —— 設定沒生效時它會安靜地直連雲端，
+        畫面上不會有任何提示，這個數字就是唯一線索。
+      </p>
+    </section>
+
+    <section class="card">
+      <h2>事件流 <span class="hint">最新的在最上面 · 只記型別與數量，沒有任何原始內容</span></h2>
+      <div class="tbl-scroll">
+        <table>
+          <thead><tr><th>時間</th><th>事件</th><th>內容</th><th>數字</th></tr></thead>
+          <tbody id="eventBody"></tbody>
+        </table>
+      </div>
+      <p class="note" id="eventEmpty">還沒有事件。開始監看之後，跑一次 agent 就會出現。</p>
+    </section>
+  </div>
+
   <div class="panel" id="panel-ext" hidden>
     <section class="card">
       <h2>載體一：瀏覽器擴充 <span class="hint">C 負責 · 與這個 proxy 是兩條平行的路線</span></h2>
@@ -481,10 +514,11 @@ const esc = (s) => s.replace(/[&<>"]/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt
 document.querySelectorAll('nav.tabs button').forEach((tab) => {
   tab.addEventListener('click', () => {
     document.querySelectorAll('nav.tabs button').forEach((t) => t.setAttribute('aria-selected', String(t === tab)));
-    ['try', 'what', 'ext', 'status'].forEach((name) => {
+    ['try', 'what', 'live', 'ext', 'status'].forEach((name) => {
       $('panel-' + name).hidden = (name !== tab.dataset.tab);
     });
     if (tab.dataset.tab === 'status') loadStatus();
+    if (tab.dataset.tab === 'live') pollEvents();
   });
 });
 
@@ -623,6 +657,83 @@ async function restore() {
   $('restoreNote').textContent = d.unknown > 0
     ? '紅色的是對照表裡查不到的佔位符 —— 雲端 AI 有可能自己編出沒發過的號碼（幻覺）。這種一律原樣保留，絕不猜測：猜錯等於憑空捏造一筆個資塞進你的內容裡。'
     : '所有佔位符都換回真值了。真實運作時這一步發生在 SSE 串流上，佔位符可能被切在兩個封包之間，還原器要邊收邊判斷什麼時候可以安全放行。';
+}
+
+/* ---------------------------------------------------------------- 即時監看 */
+let liveTimer = null;
+let lastEventId = 0;
+
+$('liveToggle').addEventListener('click', () => {
+  if (liveTimer) {
+    clearInterval(liveTimer);
+    liveTimer = null;
+    $('liveToggle').textContent = '開始監看';
+    $('liveState').textContent = '已暫停';
+  } else {
+    pollEvents();
+    liveTimer = setInterval(pollEvents, 2000);
+    $('liveToggle').textContent = '暫停';
+    $('liveState').textContent = '監看中（每 2 秒更新）';
+  }
+});
+
+$('liveClear').addEventListener('click', () => {
+  $('eventBody').innerHTML = '';
+  $('eventEmpty').hidden = false;
+  // 只清畫面，不清 proxy 那邊的緩衝 —— 下次輪詢從目前這一筆之後接續
+});
+
+function renderEvent(e) {
+  const num = (v) => `<b>${v}</b>`;
+  if (e.kind === 'mask') {
+    const detail = Object.entries(e.counts).map(([t, n]) => `${t} x${n}`).join('、');
+    return `<tr>
+      <td class="mono">${esc(e.at)}</td>
+      <td><span class="pill ner">遮蔽</span></td>
+      <td>本輪新增 ${num(e.total)} 筆個資<br><span class="note">${esc(detail)}</span></td>
+      <td class="mono">快取 ${Math.round(e.cache_hit_rate * 100)}%</td>
+    </tr>`;
+  }
+  const stream = e.stream ? ' <span class="pill skip">SSE</span>' : '';
+  const unknown = e.unknown ? ` · <span style="color:var(--clay)">查無對照 ${e.unknown}</span>` : '';
+  return `<tr>
+    <td class="mono">${esc(e.at)}</td>
+    <td><span class="pill ok">轉發</span></td>
+    <td class="mono">${esc(e.method)} /${esc(e.path)} → ${e.status}${stream}</td>
+    <td class="mono">上游 ${num(e.upstream_ms)}ms · 遮蔽 ${num(e.detect_ms)}ms · 還原 ${num(e.restored)} 處${unknown}</td>
+  </tr>`;
+}
+
+async function pollEvents() {
+  let res;
+  try {
+    res = await fetch('/demo/events?since=' + lastEventId);
+  } catch (err) {
+    $('liveState').textContent = '連不到 proxy —— 它可能已經關掉了';
+    return;
+  }
+  if (!res.ok) return;
+  const d = await res.json();
+
+  if (d.events.length) {
+    $('eventEmpty').hidden = true;
+    // 新的放最上面：反序插入
+    const html = d.events.map(renderEvent).reverse().join('');
+    $('eventBody').insertAdjacentHTML('afterbegin', html);
+    lastEventId = d.last_id;
+    // 只留最近 200 列，避免長時間監看讓畫面無限長
+    const rows = $('eventBody').children;
+    while (rows.length > 200) $('eventBody').removeChild(rows[rows.length - 1]);
+  }
+
+  const t = d.traffic;
+  const cell = (label, value, cls) => `<div><dt>${label}</dt><dd class="${cls || ''}">${value}</dd></div>`;
+  $('liveStats').innerHTML = [
+    cell('agent 流量', t.requests + ' 次', t.requests > 0 ? 'on' : 'off'),
+    cell('最近一次', t.seconds_since_last == null ? '—' : t.seconds_since_last + ' 秒前'),
+    cell('第一次抵達', t.first_at || '—'),
+    cell('畫面上的事件', $('eventBody').children.length + ' 筆')
+  ].join('');
 }
 
 async function loadStatus() {
