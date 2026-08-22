@@ -76,6 +76,26 @@ def mask_payload(
     return counts
 
 
+def new_value_counts(before: dict[str, int], after: dict[str, int]) -> dict[str, int]:
+    """比對兩次 `MappingTable.issued_counts()`，算出「這一輪新增的不重複真值」。
+
+    為什麼需要這個：agent 每輪都重送整段對話歷史，同一批個資每輪都會被重新
+    掃到、重新遮蔽。若直接印該輪遮掉的**筆數**，數字會隨對話變長一路往上爬
+    （實測一次 Codex 工作階段：6 -> 8 -> 14 -> 17，其中後面三輪根本沒有任何
+    新個資），使用者無從分辨「又有新個資送出去了」與「還是原來那批」。
+
+    清空後（閒置逾時）計數會歸零，`after < before`。這種情況代表整張表重新
+    發過號，該型別現有的號碼**全部**是這一輪新配的，因此取 `after`。
+    """
+    new: dict[str, int] = {}
+    for pii_type, count in after.items():
+        previous = before.get(pii_type, 0)
+        delta = count - previous if count >= previous else count
+        if delta > 0:
+            new[pii_type] = delta
+    return new
+
+
 def mask_payload_with_risk(
     payload: dict,
     table: MappingTable,

@@ -318,6 +318,19 @@ def summarize(results: list[dict]) -> dict[str, int]:
     return counts
 
 
+def format_new_values(counts: dict[str, int]) -> str:
+    """把「本輪新增的不重複真值」格式化成一行。無新增時回傳空字串。
+
+    與 `format_warning()` 分開是因為兩者數的是不同的東西：那邊是「這包
+    payload 裡遮掉幾處」（含重複出現），這裡是「多了幾個沒看過的真值」。
+    """
+    if not counts:
+        return ""
+    detail = "、".join(f"{t} x{n}" for t, n in sorted(counts.items()))
+    total = sum(counts.values())
+    return f"本輪新增 {total} 筆個資（{detail}）"
+
+
 def format_warning(counts: dict[str, int]) -> str:
     """把摘要格式化成一行警告訊息。無偵測結果時回傳空字串。"""
     if not counts:
