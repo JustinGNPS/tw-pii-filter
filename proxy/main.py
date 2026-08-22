@@ -24,6 +24,7 @@ import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+import httpx
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse, StreamingResponse
 
@@ -112,6 +113,56 @@ async def _upstream_not_configured(
                 "message": str(exc),
                 "type": "proxy_configuration_error",
                 "code": "upstream_not_configured",
+            }
+        },
+    )
+
+
+@app.exception_handler(httpx.RequestError)
+async def _upstream_unreachable(request: Request, exc: httpx.RequestError) -> Response:
+    """連不上上游時，回一則講得清楚的錯誤，而不是無訊息的 500。
+
+    這是 `_upstream_not_configured` 的同一族問題：base URL **設了但連不上**
+    （位址打錯、VPN 沒開、上游掛掉、逾時）。原本這些 `httpx.RequestError`
+    會一路往上拋，agent 只收到一個沒有任何線索的 500。
+
+    逾時與連線失敗分開給狀態碼：
+      - `TimeoutException` -> **504**（Gateway Timeout）：連得到，只是太慢。
+        值得重試，也可能是 `PROXY_READ_TIMEOUT` 設太短。
+      - 其餘 -> **502**（Bad Gateway）：根本連不上，重試通常沒用。
+
+    **涵蓋範圍僅限「開始串流之前」。** 若上游是在 SSE 串流中途斷掉，回應的
+    標頭早就送出去了，這裡改不了狀態碼 —— 那種情況只能讓連線中斷，由 agent
+    自己判斷。這是 HTTP 的限制，不是可以繞過的實作選擇。
+    """
+    upstream = config.UPSTREAM_BASE_URL or "（未設定）"
+    if isinstance(exc, httpx.TimeoutException):
+        status, code = 504, "upstream_timeout"
+        detail = (
+            f"連線上游逾時：{upstream}。"
+            f"目前設定為連線 {config.CONNECT_TIMEOUT} 秒、讀取 {config.READ_TIMEOUT} 秒"
+            "（可用 PROXY_CONNECT_TIMEOUT / PROXY_READ_TIMEOUT 調整）。"
+        )
+    else:
+        status, code = 502, "upstream_unreachable"
+        detail = (
+            f"連不上上游：{upstream}。"
+            "請確認 .env 的 UPSTREAM_BASE_URL 是否正確、該位址是否可達"
+            "（校內服務可能需要先連上 VPN）。"
+        )
+    # 例外訊息本身（例如 [Errno 11001] getaddrinfo failed）對診斷很有用，
+    # 但它是英文技術訊息，附在後面而不是取代上面的說明
+    reason = str(exc) or type(exc).__name__
+    message = f"{detail}原始錯誤：{reason}"
+
+    logger.error("%s", message)
+    return JSONResponse(
+        status_code=status,
+        content={
+            "error": {
+                "message": message,
+                "type": "proxy_upstream_error",
+                "code": code,
             }
         },
     )
