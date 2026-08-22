@@ -175,6 +175,25 @@ async def reset() -> dict:
     return {"ok": True, "mapping_entries": len(DEMO_TABLE)}
 
 
+@router.get("/events")
+async def events(since: int = 0) -> dict:
+    """自 `since` 之後發生的事件，給「即時監看」分頁輪詢用。
+
+    `since` 帶上前一次拿到的 `last_id`，就只會拿到新的部分 —— 不必每次重傳
+    整份緩衝。第一次呼叫用 `since=0` 取得目前緩衝區的全部（最多 100 筆）。
+
+    事件內容**只有型別與數量，沒有任何原始個資**（見 `proxy/traffic.py`）。
+    """
+    _require_enabled()
+    from proxy import traffic
+
+    return {
+        "events": traffic.EVENTS.since(since),
+        "last_id": traffic.EVENTS.last_id,
+        "traffic": traffic.STATS.snapshot(),
+    }
+
+
 @router.get("/status")
 async def status(request: Request) -> dict:
     """proxy 目前的設定與**真實**流量狀態（不是示範用的那份）。"""

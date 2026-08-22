@@ -161,6 +161,14 @@ def _log_new_values(before: dict[str, int], table: MappingTable, tag: str = "") 
         detector.format_new_values(new),
         detector.CACHE.hit_rate * 100,
     )
+    # 只記型別與數量，絕不記原始內容（見 proxy/traffic.py 的紅線說明）
+    traffic.EVENTS.record(
+        "mask",
+        counts=new,
+        total=sum(new.values()),
+        cache_hit_rate=round(detector.CACHE.hit_rate, 3),
+        tag=tag,
+    )
 
 
 def _log_combination_risk(combination_risk: dict | None) -> None:
@@ -252,6 +260,17 @@ async def _proxy(path: str, request: Request) -> Response:
                     sse.restored,
                     f"（{sse.unknown} 筆查無對照）" if sse.unknown else "",
                 )
+                traffic.EVENTS.record(
+                    "done",
+                    method=request.method,
+                    path=path,
+                    status=upstream.status_code,
+                    stream=True,
+                    upstream_ms=round(total),
+                    detect_ms=round(detect_ms, 1),
+                    restored=sse.restored,
+                    unknown=sse.unknown,
+                )
 
         return StreamingResponse(
             relay(),
@@ -277,6 +296,17 @@ async def _proxy(path: str, request: Request) -> Response:
         detect_ms,
         restored,
         f"（{unknown} 筆查無對照）" if unknown else "",
+    )
+    traffic.EVENTS.record(
+        "done",
+        method=request.method,
+        path=path,
+        status=upstream.status_code,
+        stream=False,
+        upstream_ms=round(total),
+        detect_ms=round(detect_ms, 1),
+        restored=restored,
+        unknown=unknown,
     )
     return Response(
         content=content,
@@ -422,6 +452,17 @@ async def _relay_anthropic_once(
         restored,
         f"（{unknown} 筆查無對照）" if unknown else "",
     )
+    traffic.EVENTS.record(
+        "done",
+        method="POST",
+        path="v1/messages",
+        status=upstream.status_code,
+        stream=False,
+        upstream_ms=round(total),
+        detect_ms=round(detect_ms, 1),
+        restored=restored,
+        unknown=unknown,
+    )
 
     sse = anthropic_adapter.response_to_event_stream(
         openai_response, model=model, message_id=message_id
@@ -478,6 +519,17 @@ async def _relay_anthropic_stream(
                 detect_ms,
                 sse_restorer.restored,
                 f"（{sse_restorer.unknown} 筆查無對照）" if sse_restorer.unknown else "",
+            )
+            traffic.EVENTS.record(
+                "done",
+                method="POST",
+                path="v1/messages",
+                status=upstream.status_code,
+                stream=True,
+                upstream_ms=round(total),
+                detect_ms=round(detect_ms, 1),
+                restored=sse_restorer.restored,
+                unknown=sse_restorer.unknown,
             )
 
     return StreamingResponse(relay(), media_type="text/event-stream")
