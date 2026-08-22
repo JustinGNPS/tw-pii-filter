@@ -22,7 +22,9 @@ proxy 的保護有一個前提：**agent 真的被指向它**。這個前提失�
 
 from __future__ import annotations
 
+import threading
 import time
+from collections import deque
 
 
 class TrafficStats:
@@ -67,6 +69,61 @@ class TrafficStats:
         self.__init__()
 
 
+class EventLog:
+    """最近發生的事件（環形緩衝），供示範頁面的「即時監看」讀取。
+
+    ## 為什麼要記事件而不只是計數
+
+    `TrafficStats` 回答的是「有沒有流量」，這裡回答的是「**剛剛發生了什麼**」。
+    agent 工作時，遮蔽與還原的細節目前只存在於終端機的 log 裡，一洗過去就沒了
+    —— 而那正是開發期最需要盯著看的東西（2026-08-22 兩次「agent 靜默繞過
+    proxy」都是事後翻 log 才發現的）。
+
+    ## 紅線：只記型別與數量，絕不記原始內容
+
+    跟 log 同一個規則。這個緩衝區若記了原文，它就變成一份躺在記憶體裡的
+    個資快取 —— 而且會透過 `/demo/events` 端點暴露出去。
+
+    ## 為什麼有 id
+
+    頁面用輪詢的方式讀（每隔幾秒問一次），帶上「我看到哪一筆了」就只會拿到
+    新的部分，不必每次重傳整份。id 單調遞增，不因緩衝區淘汰而重來。
+    """
+
+    def __init__(self, max_events: int = 100) -> None:
+        self._events: deque[dict] = deque(maxlen=max_events)
+        self._next_id = 1
+        self._lock = threading.Lock()
+
+    def record(self, kind: str, **fields: object) -> None:
+        """記一筆事件。`kind` 目前有 `mask`（遮蔽到新個資）與 `done`（請求完成）。"""
+        with self._lock:
+            event = {
+                "id": self._next_id,
+                "at": time.strftime("%H:%M:%S", time.localtime()),
+                "kind": kind,
+                **fields,
+            }
+            self._next_id += 1
+            self._events.append(event)
+
+    def since(self, last_id: int = 0) -> list[dict]:
+        """回傳 id 大於 `last_id` 的事件。`last_id=0` 代表要目前緩衝區的全部。"""
+        with self._lock:
+            return [e for e in self._events if e["id"] > last_id]
+
+    @property
+    def last_id(self) -> int:
+        with self._lock:
+            return self._events[-1]["id"] if self._events else 0
+
+    def clear(self) -> None:
+        """測試用。"""
+        with self._lock:
+            self._events.clear()
+            self._next_id = 1
+
+
 def _iso(timestamp: float | None) -> str | None:
     if timestamp is None:
         return None
@@ -76,3 +133,7 @@ def _iso(timestamp: float | None) -> str | None:
 # 模組層單例，與 `detector.CACHE` 同樣的用法：proxy 是單一行程，
 # 這份統計本來就該是全域的。
 STATS = TrafficStats()
+
+# 事件緩衝只在示範頁面開啟時才有人讀，但一律記錄 —— 成本是一個上限 100 筆的
+# deque，而「出事之後才想開來看」是來不及的。
+EVENTS = EventLog()

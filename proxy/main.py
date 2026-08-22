@@ -31,6 +31,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from proxy import (
     anthropic_adapter,
     config,
+    demo,
     detector,
     forward,
     masker,
@@ -89,6 +90,23 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="tw-pii-filter proxy", lifespan=lifespan)
+
+# 示範頁面（`PII_ENABLE_DEMO=1` 才會真的回應，否則一律 404）。
+# **必須在檔案底部那兩條萬用路由之前註冊** —— FastAPI 依註冊順序比對，
+# 晚註冊的話 `/demo` 會先被 `/{path:path}` 接走、當成要轉發給上游的請求。
+app.include_router(demo.router)
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon() -> Response:
+    """瀏覽器會自動要 favicon，不要把它轉發給上游。
+
+    沒有這條路由的話，`/{path:path}` 萬用路由會把它當成要轉發的請求送出去 ——
+    實測是一次 1367 ms 的往返只為了拿回 404，而且會被計入「agent 流量」，
+    讓那個判準（見 `proxy/traffic.py`）失真。開了 `/demo` 頁面之後每次載入
+    都會發生一次。
+    """
+    return Response(status_code=204)
 
 
 @app.exception_handler(forward.UpstreamNotConfigured)
@@ -178,6 +196,9 @@ async def healthz() -> dict:
         "mode": "masking",  # 第二版：遮蔽 + 還原
         "ner_enabled": config.ENABLE_NER,
         "mapping_entries": len(app.state.mapping),
+        # 累計：每個型別看過幾個不重複的真值。log 只印「本輪新增」，
+        # 想知道整體狀況看這裡（見 _log_new_values）
+        "mapping_by_type": app.state.mapping.issued_counts(),
         "detection_cache": detector.CACHE.stats(),
         "traffic": traffic.STATS.snapshot(),
     }
@@ -195,6 +216,39 @@ def _record_arrival(method: str, path: str) -> None:
             method,
             path.lstrip("/"),
         )
+
+
+def _log_new_values(before: dict[str, int], table: MappingTable, tag: str = "") -> None:
+    """印出「這一輪新增的個資」，沒有新增就**完全不印**。
+
+    為什麼不印「這包 payload 遮了幾筆」：agent 每輪都重送整段對話歷史，同一批
+    個資每輪都會被重新掃到，那個數字會隨對話變長一路往上爬（實測一次 Codex
+    工作階段：6 -> 8 -> 14 -> 17，而後面三輪根本沒有任何新的個資）。使用者
+    真正要知道的是「**又有沒看過的個資送出去了**」，不是「歷史裡總共有幾筆」。
+
+    沒有新增就靜默，是因為那種情況沒有任何新資訊 —— 該輪仍然有一行
+    `POST /... -> 200` 的完成紀錄可以證明 proxy 有在工作，累計狀況則看
+    `/healthz` 的 `mapping_by_type`。
+
+    只印型別與數量，絕不印遮蔽掉的原始內容。
+    """
+    new = masker.new_value_counts(before, table.issued_counts())
+    if not new:
+        return
+    logger.warning(
+        "已遮蔽%s：%s｜快取命中率 %.0f%%",
+        tag,
+        detector.format_new_values(new),
+        detector.CACHE.hit_rate * 100,
+    )
+    # 只記型別與數量，絕不記原始內容（見 proxy/traffic.py 的紅線說明）
+    traffic.EVENTS.record(
+        "mask",
+        counts=new,
+        total=sum(new.values()),
+        cache_hit_rate=round(detector.CACHE.hit_rate, 3),
+        tag=tag,
+    )
 
 
 def _log_combination_risk(combination_risk: dict | None) -> None:
@@ -225,15 +279,11 @@ def _mask_request(path: str, body: bytes, table: MappingTable) -> tuple[bytes, f
     started = time.perf_counter()
     try:
         payload = json.loads(body.decode("utf-8"))
+        issued_before = table.issued_counts()
         counts, combination_risk = masker.mask_payload_with_risk(payload, table)
         if counts:
             body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-            # 只印型別與筆數，絕不印遮蔽掉的原始內容
-            logger.warning(
-                "已遮蔽：%s｜快取命中率 %.0f%%",
-                detector.format_warning(counts),
-                detector.CACHE.hit_rate * 100,
-            )
+        _log_new_values(issued_before, table)
         _log_combination_risk(combination_risk)
     except json.JSONDecodeError:
         pass  # 不是 JSON（例如檔案上傳），本來就沒得掃
@@ -290,6 +340,17 @@ async def _proxy(path: str, request: Request) -> Response:
                     sse.restored,
                     f"（{sse.unknown} 筆查無對照）" if sse.unknown else "",
                 )
+                traffic.EVENTS.record(
+                    "done",
+                    method=request.method,
+                    path=path,
+                    status=upstream.status_code,
+                    stream=True,
+                    upstream_ms=round(total),
+                    detect_ms=round(detect_ms, 1),
+                    restored=sse.restored,
+                    unknown=sse.unknown,
+                )
 
         return StreamingResponse(
             relay(),
@@ -315,6 +376,17 @@ async def _proxy(path: str, request: Request) -> Response:
         detect_ms,
         restored,
         f"（{unknown} 筆查無對照）" if unknown else "",
+    )
+    traffic.EVENTS.record(
+        "done",
+        method=request.method,
+        path=path,
+        status=upstream.status_code,
+        stream=False,
+        upstream_ms=round(total),
+        detect_ms=round(detect_ms, 1),
+        restored=restored,
+        unknown=unknown,
     )
     return Response(
         content=content,
@@ -362,13 +434,9 @@ def _mask_anthropic_payload(payload: dict, table: MappingTable) -> tuple[dict, f
     """
     started = time.perf_counter()
     try:
-        counts, combination_risk = masker.mask_payload_with_risk(payload, table)
-        if counts:
-            logger.warning(
-                "已遮蔽（Claude Code）：%s｜快取命中率 %.0f%%",
-                detector.format_warning(counts),
-                detector.CACHE.hit_rate * 100,
-            )
+        issued_before = table.issued_counts()
+        _, combination_risk = masker.mask_payload_with_risk(payload, table)
+        _log_new_values(issued_before, table, tag="（Claude Code）")
         _log_combination_risk(combination_risk)
     except Exception as exc:  # noqa: BLE001 - 遮蔽失敗不能讓 agent 拿不到回覆
         logger.error("遮蔽失敗，該次請求未受保護：%s", exc)
@@ -464,6 +532,17 @@ async def _relay_anthropic_once(
         restored,
         f"（{unknown} 筆查無對照）" if unknown else "",
     )
+    traffic.EVENTS.record(
+        "done",
+        method="POST",
+        path="v1/messages",
+        status=upstream.status_code,
+        stream=False,
+        upstream_ms=round(total),
+        detect_ms=round(detect_ms, 1),
+        restored=restored,
+        unknown=unknown,
+    )
 
     sse = anthropic_adapter.response_to_event_stream(
         openai_response, model=model, message_id=message_id
@@ -520,6 +599,17 @@ async def _relay_anthropic_stream(
                 detect_ms,
                 sse_restorer.restored,
                 f"（{sse_restorer.unknown} 筆查無對照）" if sse_restorer.unknown else "",
+            )
+            traffic.EVENTS.record(
+                "done",
+                method="POST",
+                path="v1/messages",
+                status=upstream.status_code,
+                stream=True,
+                upstream_ms=round(total),
+                detect_ms=round(detect_ms, 1),
+                restored=sse_restorer.restored,
+                unknown=sse_restorer.unknown,
             )
 
     return StreamingResponse(relay(), media_type="text/event-stream")
