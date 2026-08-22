@@ -132,6 +132,16 @@ core/ner/requirements.txt`）。遮蔽本身（`_mask_request`）已經用
 `asyncio.to_thread` 丟到背景執行緒跑，開啟語意層後也不會卡住 event loop
 上其他請求。
 
+> ⚠️ **展示姓名/地址遮蔽時，「叫 agent 讀檔」這條路徑不可靠。** Windows
+> PowerShell 5.1 的 `type` / `Get-Content` 讀 UTF-8 檔案時預設用 ANSI 代碼頁
+> （繁中是 cp950），中文在**送到 proxy 之前**就已經變成亂碼，語意層掃不到
+> （規則層的身分證、手機是 ASCII，不受影響）。
+>
+> 關鍵是**沒辦法控制 agent 會挑哪個指令讀檔**：實測同一台機器、同一個檔案、
+> 同一個 agent，用 `type` 讀是亂碼、用 `rg` 讀完全正常。所以要穩定展示姓名/
+> 地址遮蔽，請直接貼上內容，不要賭 agent 這次會用哪個工具。
+> 詳見 `docs/B_design.md` 已知限制第 6 條與 issue #37。
+
 ### log 只報「本輪新增的個資」，不報「這包遮了幾筆」
 
 agent 每一輪都會重送整段對話歷史，同一批個資每輪都會被重新掃到、重新遮蔽。
@@ -280,6 +290,14 @@ python -m venv .venv
 | 啟用組合風險提示 | `PII_ENABLE_RISK_WARNING` | 開啟 |
 | 對照表閒置逾時（秒，`0` 代表停用） | `PROXY_MAPPING_IDLE_TIMEOUT` | `1800`（30 分鐘） |
 
+上游 base URL 沒設定時，proxy **仍會正常啟動**（啟動摘要會印一行 WARNING），但每個轉發請求都會回 `502` 與一則指出該設哪個變數的訊息：
+
+```json
+{"error": {"message": "上游 base URL 未設定……請在 repo 根目錄的 .env 設定 UPSTREAM_BASE_URL……", "type": "proxy_configuration_error", "code": "upstream_not_configured"}}
+```
+
+刻意不在啟動時就讓行程死掉：`/healthz` 要留著可用，使用者正是要靠它看出 `upstream` 是空的。
+
 `PII_SKIP_TYPES` 設成空字串代表**什麼都不跳過**（連職稱也遮）；
 `PII_NER_ALLOW_TYPES` 設成空字串代表**語意層全部採信**（回到白名單前的行為，
 供比對／除錯用）。兩者大小寫都吃，內部會做同一套正規化。啟動時會把實際生效的
@@ -413,6 +431,17 @@ $env:PII_ENABLE_DEMO = "1"
 | proxy 總額外成本 | 約 5 ms |
 | 上游 LLM 本身 | 1400〜2900 ms |
 | **占比** | **約 0.25%** |
+
+**真實 agent 實測**（2026-08-22，Codex CLI 兩輪工作階段，純規則層）：
+
+| 項目 | 數值 |
+|---|---|
+| 單次遮蔽 | **1.6〜5.8 ms** |
+| 快取命中率 | 57% → **87%**（對話越長命中率越高，因為歷史被重複掃） |
+| 對照表 | 6 個不重複真值（3 個身分證、3 個手機） |
+
+合成基準測的是「一包大 payload」，真實 agent 測的是「同一段歷史被重複掃十幾輪」
+—— 後者才是實際的使用形態，而它正好是快取最有效的情況。
 
 以上是**只跑規則層**的數字，`PII_ENABLE_NER` 關閉時就是這張表。語意層已經
 接上（見上一節），但預設關閉；D 修好 512 token 截斷問題後重新實測 CPU、

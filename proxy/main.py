@@ -25,7 +25,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Request, Response
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
 from proxy import (
     anthropic_adapter,
@@ -63,6 +63,8 @@ async def lifespan(app: FastAPI):
     # 閒置逾時後會自動清空（決定 11），逾時秒數見 config.MAPPING_IDLE_TIMEOUT
     app.state.mapping = MappingTable(idle_timeout=config.MAPPING_IDLE_TIMEOUT)
     logger.info("proxy 啟動\n%s", config.startup_summary())
+    if not config.UPSTREAM_BASE_URL:
+        logger.warning(forward.MISSING_UPSTREAM_MESSAGE)
     if not config.UPSTREAM_API_KEY:
         logger.warning("找不到上游金鑰，轉發一定會失敗。請確認 .env 內的變數名稱。")
     # agent 沒指到 proxy 時不會有任何跡象（見 proxy/traffic.py），
@@ -104,6 +106,33 @@ async def favicon() -> Response:
     都會發生一次。
     """
     return Response(status_code=204)
+
+
+@app.exception_handler(forward.UpstreamNotConfigured)
+async def _upstream_not_configured(
+    request: Request, exc: forward.UpstreamNotConfigured
+) -> Response:
+    """沒設定上游 base URL 時，回一則講得清楚的錯誤給 agent。
+
+    掛成 app 層級的處理器（而不是在每個路由各包一個 try），是因為轉發有
+    **兩條路徑**：`_proxy()` 與 Anthropic 相容路由，兩邊都會呼叫
+    `forward.open_upstream()`。掛在這裡一次涵蓋，日後多一條路徑也不會漏。
+
+    用 502（Bad Gateway）而不是 500：問題出在「proxy 與上游之間」而不是
+    agent 送來的請求。body 用 OpenAI 的錯誤格式包，agent 才顯示得出訊息 ——
+    多數 OpenAI 相容客戶端只認 `error.message` 這個欄位。
+    """
+    logger.error("%s", exc)
+    return JSONResponse(
+        status_code=502,
+        content={
+            "error": {
+                "message": str(exc),
+                "type": "proxy_configuration_error",
+                "code": "upstream_not_configured",
+            }
+        },
+    )
 
 
 @app.get("/healthz")
