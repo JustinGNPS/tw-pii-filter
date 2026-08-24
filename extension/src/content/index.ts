@@ -33,10 +33,16 @@ let isInserting = false;
 let panelOpen = false;
 
 async function handleText(element: HTMLElement, text: string): Promise<void> {
-  const { spans } = detectAll(text);
+  const { spans, combination_risk } = detectAll(text);
+  const risk = combination_risk ?? null;
 
-  // 沒偵測到東西就完全不打擾使用者——這是擴充能被長期留著的前提
-  if (spans.length === 0) {
+  // 沒偵測到東西、也沒有組合風險，就完全不打擾使用者
+  // ——這是擴充能被長期留著的前提。
+  //
+  // ⚠️ 條件刻意包含組合風險：像「35歲男性，住新竹，資深後端工程師」這種文字
+  // 一個 span 都抓不到，但正是報告 4.3 講的「隱含身分」情境（洩漏率 95%）。
+  // 若只看 spans 就放行，面板等於告訴使用者「沒問題」——那比不提醒更糟。
+  if (spans.length === 0 && !risk) {
     isInserting = true;
     insertText(element, text);
     isInserting = false;
@@ -55,7 +61,7 @@ async function handleText(element: HTMLElement, text: string): Promise<void> {
   panelOpen = true;
   let decision;
   try {
-    decision = await showPanel(spans, previewPlaceholders);
+    decision = await showPanel(spans, previewPlaceholders, risk);
   } finally {
     panelOpen = false;
   }

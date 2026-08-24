@@ -528,5 +528,93 @@
     "text": "半形括號市話 (02) 2345 6789 與 02 2345 6789",
     "spans": [],
     "combination_risk": null
+  },
+  {
+    "text": "35歲男性，目前住在新竹",
+    "spans": [],
+    "combination_risk": {
+      "score": 0.5,
+      "contributing_types": [
+        "AGE",
+        "GENDER"
+      ],
+      "risk_level": "中",
+      "suggestions": [
+        "「35歲」建議泛化為「35-39歲」",
+        "若非必要，建議省略性別資訊"
+      ]
+    }
+  },
+  {
+    "text": "陳女士今年42歲，是本院長期追蹤的個案",
+    "spans": [],
+    "combination_risk": {
+      "score": 0.5,
+      "contributing_types": [
+        "AGE",
+        "GENDER"
+      ],
+      "risk_level": "中",
+      "suggestions": [
+        "「42歲」建議泛化為「40-44歲」",
+        "若非必要，建議省略性別資訊"
+      ]
+    }
+  },
+  {
+    "text": "三十五歲的先生，主訴胸悶三天",
+    "spans": [],
+    "combination_risk": {
+      "score": 0.5,
+      "contributing_types": [
+        "AGE",
+        "GENDER"
+      ],
+      "risk_level": "中",
+      "suggestions": [
+        "「35歲」建議泛化為「35-39歲」",
+        "若非必要，建議省略性別資訊"
+      ]
+    }
+  },
+  {
+    "text": "王小姐 A123456789，二十八歲，聯絡電話 0912345678",
+    "spans": [
+      {
+        "start": 4,
+        "end": 14,
+        "type": "TW_ID",
+        "text": "A123456789",
+        "confidence": 0.99,
+        "source": "rule",
+        "replacement": "[TW_ID_1]"
+      },
+      {
+        "start": 25,
+        "end": 35,
+        "type": "TW_PHONE_M",
+        "text": "0912345678",
+        "confidence": 0.9,
+        "source": "rule",
+        "replacement": "[TW_PHONE_M_1]"
+      }
+    ],
+    "combination_risk": {
+      "score": 0.5,
+      "contributing_types": [
+        "AGE",
+        "GENDER"
+      ],
+      "risk_level": "中",
+      "suggestions": [
+        "「28歲」建議泛化為「25-29歲」",
+        "若非必要，建議省略性別資訊"
+      ]
+    }
+  },
+  {
+    "text": "這位先生沒有透露年齡",
+    "spans": [],
+    "combination_risk": null
   }
 ]

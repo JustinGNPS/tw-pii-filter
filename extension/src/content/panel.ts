@@ -10,7 +10,7 @@
  *  - **使用者有最終決定權**：每一項都可以取消勾選；偵測是輔助，不是強制。
  */
 
-import type { Span } from '../core';
+import type { CombinationRisk, Span } from '../core';
 import { isKnownType, riskLevel, typeLabel } from '../masking';
 
 /** 使用者在面板上做出的決定。 */
@@ -77,6 +77,32 @@ const STYLE = `
   .link:hover { color: #0f172a; text-decoration: underline; }
   .note { font-size: 11.5px; color: #94a3b8; padding: 0 20px 12px; line-height: 1.5; }
 
+  /* 組合風險提示：逐項清單看不出「單項都不算個資、合起來能指認」這件事 */
+  .risk {
+    margin: 10px 12px 2px; padding: 11px 13px;
+    border-radius: 9px; border: 1px solid #fcd34d; background: #fffbeb;
+  }
+  .risk.high { border-color: #fca5a5; background: #fef2f2; }
+  .risk-head { display: flex; align-items: center; gap: 7px; margin-bottom: 5px; }
+  .risk-title { font-size: 12.5px; font-weight: 650; color: #92400e; }
+  .risk.high .risk-title { color: #b91c1c; }
+  .risk-score { font-size: 11px; color: #a16207; margin-left: auto; font-variant-numeric: tabular-nums; }
+  .risk.high .risk-score { color: #dc2626; }
+  .risk-body { font-size: 11.5px; color: #78350f; line-height: 1.6; }
+  .risk.high .risk-body { color: #7f1d1d; }
+  .risk-body ul { margin: 5px 0 0; padding-left: 17px; }
+  .risk-body li { margin: 2px 0; }
+
+  @media (prefers-color-scheme: dark) {
+    .risk { border-color: #a16207; background: #2a2110; }
+    .risk.high { border-color: #b91c1c; background: #2c1618; }
+    .risk-title { color: #fcd34d; }
+    .risk.high .risk-title { color: #fca5a5; }
+    .risk-body { color: #fde68a; }
+    .risk.high .risk-body { color: #fecaca; }
+    .risk-score { color: #d1a54a; }
+  }
+
   @media (prefers-color-scheme: dark) {
     .card { background: #1e293b; color: #e2e8f0; }
     header, footer { border-color: #334155; }
@@ -96,8 +122,15 @@ const STYLE = `
  * @param placeholders 每個 span 預計會被換成的佔位符（與 spans 同索引）。
  *                     刻意由呼叫端傳入而不是用 `span.replacement`——後者每次
  *                     偵測都會重新編號，顯示出來的號碼會跟實際送出的對不上。
+ * @param risk         Layer 3 組合風險評分，`null` 表示沒有組合風險。
+ *                     逐項清單天生看不出「單項都不算個資、組合起來能指認個人」，
+ *                     這一塊就是為了補上那個盲點（見專題報告 4.3）。
  */
-export function showPanel(spans: Span[], placeholders: string[]): Promise<PanelDecision> {
+export function showPanel(
+  spans: Span[],
+  placeholders: string[],
+  risk: CombinationRisk | null = null,
+): Promise<PanelDecision> {
   return new Promise((resolve) => {
     const host = document.createElement('div');
     host.style.cssText = 'all: initial; position: fixed; z-index: 2147483647;';
@@ -107,14 +140,23 @@ export function showPanel(spans: Span[], placeholders: string[]): Promise<PanelD
     style.textContent = STYLE;
     shadow.append(style);
 
+    // 一個 span 都沒有、只有組合風險時，標題不能寫「偵測到 0 項」——
+    // 那會讓使用者以為沒事，正好抵消掉組合風險提示要傳達的訊息。
+    const onlyRisk = spans.length === 0 && risk !== null;
+    const heading = onlyRisk ? '這段文字可能可以指認出特定個人' : `偵測到 ${spans.length} 項敏感資訊`;
+    const subtitle = onlyRisk
+      ? '沒有偵測到身分證、電話這類明確的個資，但下列資訊組合起來仍有識別風險。'
+      : '以下內容將在送出前於本地端替換成佔位符。取消勾選的項目會維持原文。';
+
     const backdrop = document.createElement('div');
     backdrop.className = 'backdrop';
     backdrop.innerHTML = `
       <div class="card" role="dialog" aria-modal="true" aria-label="敏感資訊確認">
         <header>
-          <h1>偵測到 ${spans.length} 項敏感資訊</h1>
-          <p class="sub">以下內容將在送出前於本地端替換成佔位符。取消勾選的項目會維持原文。</p>
+          <h1>${heading}</h1>
+          <p class="sub">${subtitle}</p>
         </header>
+        <div class="risk-slot"></div>
         <div class="list"></div>
         <p class="note">分析全程在你的裝置上完成，原文不會離開這台電腦。</p>
         <footer>
@@ -125,6 +167,43 @@ export function showPanel(spans: Span[], placeholders: string[]): Promise<PanelD
         </footer>
       </div>
     `;
+
+    // 組合風險提示：只在真的有風險時才出現，避免每次都跳一塊黃色區塊而被無視
+    if (risk) {
+      const box = document.createElement('div');
+      box.className = risk.risk_level === '高' ? 'risk high' : 'risk';
+
+      const head = document.createElement('div');
+      head.className = 'risk-head';
+      const title = document.createElement('span');
+      title.className = 'risk-title';
+      title.textContent = `⚠ 組合識別風險${risk.risk_level}`;
+      const score = document.createElement('span');
+      score.className = 'risk-score';
+      score.textContent = `分數 ${risk.score.toFixed(2)}`;
+      head.append(title, score);
+
+      const body = document.createElement('div');
+      body.className = 'risk-body';
+      const labels = risk.contributing_types.map((type) => typeLabel(type)).join('、');
+      const lead = document.createElement('div');
+      // 講清楚「為什麼」——只給一個 0.82 使用者不知道要做什麼
+      lead.textContent = `這段文字同時含有${labels}。單獨看都不算個資，但組合起來可能指認出特定個人，即使其他項目已經遮蔽。`;
+      body.append(lead);
+
+      if (risk.suggestions.length > 0) {
+        const list = document.createElement('ul');
+        for (const suggestion of risk.suggestions) {
+          const item = document.createElement('li');
+          item.textContent = suggestion;
+          list.append(item);
+        }
+        body.append(list);
+      }
+
+      box.append(head, body);
+      backdrop.querySelector('.risk-slot')!.append(box);
+    }
 
     const list = backdrop.querySelector('.list')!;
     const checkboxes: HTMLInputElement[] = [];
