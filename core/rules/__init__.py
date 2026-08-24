@@ -5,6 +5,7 @@ from core.rules.api_key import detect_api_key, is_valid_api_key
 from core.rules.conflict_resolver import renumber_replacements, resolve_overlaps
 from core.rules.credit_card import detect_credit_card, is_valid_credit_card
 from core.rules.email import detect_email, is_valid_email
+from core.rules.normalize import has_full_width, to_half_width
 from core.rules.tw_id import detect_tw_id, is_valid_tw_id
 from core.rules.tw_nhi import detect_tw_nhi, is_valid_tw_nhi
 from core.rules.tw_phone_l import detect_tw_phone_l, is_valid_tw_phone_l
@@ -63,9 +64,14 @@ def detect_all(text: str, extra_spans: list = None) -> dict:
     `docs/layer3_spec.md`），依 Layer 4 仲裁後的 spans 計算；沒有組合風險
     （score 為 0，即準識別子共現數 < 2）時為 `None`，屬選填欄位。
     """
+    # 全形英數在中文輸入環境很常見（注音全形模式、從 Word/PDF 複製），
+    # 但規則層的正則是 [0-9]/[A-Za-z]，對不到全形（issue #21、#27）。
+    # 正規化只做定點映射、字元數不變，因此座標可直接沿用到原文。
+    scan_text = to_half_width(text) if has_full_width(text) else text
+
     spans = []
     for detector in _DETECTORS:
-        spans.extend(detector(text)["spans"])
+        spans.extend(detector(scan_text)["spans"])
 
     if extra_spans:
         spans.extend(extra_spans)
@@ -73,7 +79,14 @@ def detect_all(text: str, extra_spans: list = None) -> dict:
     spans = resolve_overlaps(spans)
     spans = renumber_replacements(spans)
 
-    risk = compute_combination_risk(text, spans)
+    # span 的 text 一律取自**原文**，維持 docs/interface.md 的約定
+    # text[start:end] == span["text"]——使用者看到的該是自己打的全形原文。
+    if scan_text is not text:
+        for span in spans:
+            span["text"] = text[span["start"]:span["end"]]
+
+    # 用正規化後的文字算 Layer 3：AGE 正則同樣是 [0-9]，全形年齡才抓得到
+    risk = compute_combination_risk(scan_text, spans)
     combination_risk = risk if risk["score"] > 0 else None
 
     return {"text": text, "spans": spans, "combination_risk": combination_risk}

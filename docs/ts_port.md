@@ -55,53 +55,49 @@ cd extension && npm test                # 確認 TypeScript 版仍然一致
 
 ---
 
-## 🔴 已知分歧：全形數字（待與 A 討論）
+## ✅ 已修復：全形數字（原本是兩版最大的分歧）
 
-這是一致性測試在建立當天就抓到的**真實問題**，尚未修正。
+**這一節記錄的問題已於 issue #21 / #27 修復。** 保留在文件裡是因為它的成因與
+修法值得留存——這是一致性測試在建立當天就抓到的第一個真實缺口。
 
-### 現象
+### 原本的問題
 
-Python 的 `re` 對 `str` 套用 `\d` 時是 **Unicode-aware**，會匹配全形０-９；`str.isdigit()`、`int()` 同樣接受全形數字。JavaScript 的 `\d` 只匹配 ASCII `0-9`。
+Python 的 `re` 對 `str` 套用 `\d` 時是 Unicode-aware，會匹配全形０-９；
+JavaScript 的 `\d` 只認 ASCII。結果是 **Python 版自己就不一致**：
 
-結果是 **Python 版自己就不一致**：
-
-| 類別 | pattern | 全形輸入 Python | 全形輸入 TypeScript |
+| 類別 | pattern | 修復前 Python | 修復前 TypeScript |
 |---|---|---|---|
-| `TW_TAX` | `\d{8}` | ✅ 抓得到 | ❌ 抓不到 |
-| `TW_NHI` | `\d{12}` | ✅ 抓得到 | ❌ 抓不到 |
-| `TW_ID` | `[A-Za-z]\d{9}` | ❌ 抓不到（首字母是 ASCII-only 字元類） | ❌ 抓不到 |
-| `TW_PHONE_M` | `09\d{2}...` | ❌ 抓不到（開頭是字面 ASCII `09`） | ❌ 抓不到 |
+| `TW_TAX` | `\d{8}` | ✅ | ❌ |
+| `TW_NHI` | `\d{12}` | ✅ | ❌ |
+| `TW_ID` | `[A-Za-z]\d{9}` | ❌（首字母是 ASCII-only 字元類） | ❌ |
+| `TW_PHONE_M` | `09\d{2}...` | ❌（開頭是字面 ASCII `09`） | ❌ |
+| `EMAIL` | `[A-Za-z0-9._%+-]+@...` | ❌ | ❌ |
 
-驗證過的實例：
+也就是說全形手機、身分證、信箱**兩層都沒有覆蓋**——B 在 #27 確認語意層
+也補不上（全形手機只抓到單一個全形數字字元、還誤標成 `EMAIL`）。
 
-```python
->>> detect_all("統編 １２３４５６７５")
-{'spans': [{'type': 'TW_TAX', 'text': '１２３４５６７５', ...}]}   # 有抓到
-```
+### 修法：偵測前做全形→半形正規化
 
-TypeScript 版對同一段輸入回傳 `spans: []`。
+- `core/rules/normalize.py`（Python）與 `extension/src/core/normalize.ts`（TypeScript）
+- **只對全形英數（U+FF01–FF5E）與全形空格做定點映射**，不用 `NFKC`
+- 原因：NFKC 不保證長度不變（`㍿` → `株式会社` 由 1 變 4、`ﬁ` → `fi` 由 1 變 2），
+  長度一變座標就對不回原文，而遮蔽是「從後往前依座標替換」，會直接把文字切壞
+- 定點映射是嚴格 1:1、字元數保證不變，因此座標可直接沿用，不需要維護對應表
+- `span.text` 一律取自**原文**，維持 `text[start:end] == span["text"]` 的約定——
+  使用者在面板上看到的是自己打的全形原文，不是被改寫過的半形版本
 
-分歧已用 `extension/tests/known_divergence.test.ts` 釘住，一旦有人修好或改壞，測試會失敗並要求同步更新本文件。
+修復後四種型別（`TW_TAX` / `TW_ID` / `TW_PHONE_M` / `EMAIL`）全形寫法全部
+偵測得到，兩版行為一致，原本的分歧語料已移入 `tests/fixtures/parity_cases.json`
+由正式的一致性測試把關。
 
-### 為什麼這件事重要
+測試：`tests/test_normalize.py`（Python）、
+`extension/tests/known_divergence.test.ts`（TypeScript）。
 
-全形數字在中文輸入環境是**真實會發生**的——Windows 注音輸入法的全形模式、從 Word 或 PDF 複製出來的文件都可能帶全形數字。使用者貼上一份含全形統編的合約，目前：
+### 分歧語料機制仍然保留
 
-- 走 proxy（載體二）→ 擋得下來
-- 走擴充（載體一）→ **擋不下來，個資直接送出去**
-
-這不只是兩版不一致的潔癖問題，是實際的偵測缺口。
-
-### 建議修法
-
-**在偵測前統一做全形→半形正規化，兩版同步實作。**
-
-- 全形英數（U+FF01–U+FF5E）對半形（U+0021–U+007E）是固定 offset 0xFEE0，轉換簡單
-- 正規化後 `TW_ID`、`TW_PHONE_M` 也一併涵蓋，補掉 Python 現在也漏的兩類
-- **必須保留 offset 對應表**：正規化後的座標要能映回原文，否則 `span.start` / `span.end` 會對不上使用者實際看到的文字，遮蔽會切錯位置
-- 全形英數與半形是一對一映射，字元數不變，offset 對應是恆等映射——這讓實作比預期單純很多
-
-這個修法會動到 Python 規則層，屬於 A 的範圍，需要先討論再動手。相關討論請開 issue 追蹤。
+`divergence_cases.json` / `divergence_python.json` / `known_divergence.test.ts`
+這套機制留著沒刪（目前語料為空）。下次再發現兩版行為不同、而且一時無法或
+不該立刻修時，把語料丟進去就能把分歧「釘住」，讓它不會默默漂移。
 
 ---
 

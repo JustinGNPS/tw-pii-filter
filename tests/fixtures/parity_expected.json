@@ -473,7 +473,26 @@
   },
   {
     "text": "全形數字 Ａ１２３４５６７８９ 與全形手機 ０９１２３４５６７８",
-    "spans": [],
+    "spans": [
+      {
+        "start": 5,
+        "end": 15,
+        "type": "TW_ID",
+        "text": "Ａ１２３４５６７８９",
+        "confidence": 0.99,
+        "source": "rule",
+        "replacement": "[TW_ID_1]"
+      },
+      {
+        "start": 22,
+        "end": 32,
+        "type": "TW_PHONE_M",
+        "text": "０９１２３４５６７８",
+        "confidence": 0.9,
+        "source": "rule",
+        "replacement": "[TW_PHONE_M_1]"
+      }
+    ],
     "combination_risk": null
   },
   {
@@ -615,6 +634,120 @@
   {
     "text": "這位先生沒有透露年齡",
     "spans": [],
+    "combination_risk": null
+  },
+  {
+    "text": "統編 １２３４５６７５",
+    "spans": [
+      {
+        "start": 3,
+        "end": 11,
+        "type": "TW_TAX",
+        "text": "１２３４５６７５",
+        "confidence": 0.95,
+        "source": "rule",
+        "replacement": "[TW_TAX_1]"
+      }
+    ],
+    "combination_risk": null
+  },
+  {
+    "text": "身分證 Ａ１２３４５６７８９",
+    "spans": [
+      {
+        "start": 4,
+        "end": 14,
+        "type": "TW_ID",
+        "text": "Ａ１２３４５６７８９",
+        "confidence": 0.99,
+        "source": "rule",
+        "replacement": "[TW_ID_1]"
+      }
+    ],
+    "combination_risk": null
+  },
+  {
+    "text": "手機 ０９１２３４５６７８",
+    "spans": [
+      {
+        "start": 3,
+        "end": 13,
+        "type": "TW_PHONE_M",
+        "text": "０９１２３４５６７８",
+        "confidence": 0.9,
+        "source": "rule",
+        "replacement": "[TW_PHONE_M_1]"
+      }
+    ],
+    "combination_risk": null
+  },
+  {
+    "text": "健保卡 ００００１２３４５６７８",
+    "spans": [
+      {
+        "start": 4,
+        "end": 16,
+        "type": "TW_NHI",
+        "text": "００００１２３４５６７８",
+        "confidence": 0.6,
+        "source": "rule",
+        "replacement": "[TW_NHI_1]"
+      }
+    ],
+    "combination_risk": null
+  },
+  {
+    "text": "信箱 ａｂｃ@ｅｘａｍｐｌｅ.ｃｏｍ",
+    "spans": [
+      {
+        "start": 3,
+        "end": 18,
+        "type": "EMAIL",
+        "text": "ａｂｃ@ｅｘａｍｐｌｅ.ｃｏｍ",
+        "confidence": 0.95,
+        "source": "rule",
+        "replacement": "[EMAIL_1]"
+      }
+    ],
+    "combination_risk": null
+  },
+  {
+    "text": "全形統編 １２３４５６７５ 與半形統編 12345675",
+    "spans": [
+      {
+        "start": 5,
+        "end": 13,
+        "type": "TW_TAX",
+        "text": "１２３４５６７５",
+        "confidence": 0.95,
+        "source": "rule",
+        "replacement": "[TW_TAX_1]"
+      },
+      {
+        "start": 20,
+        "end": 28,
+        "type": "TW_TAX",
+        "text": "12345675",
+        "confidence": 0.95,
+        "source": "rule",
+        "replacement": "[TW_TAX_2]"
+      }
+    ],
+    "combination_risk": null
+  },
+  {
+    "text": "全形市話 ０２－２３４５６７８９",
+    "spans": [
+      {
+        "start": 5,
+        "end": 16,
+        "type": "TW_PHONE_L",
+        "text": "０２－２３４５６７８９",
+        "confidence": 0.85,
+        "source": "rule",
+        "replacement": "[TW_PHONE_L_1]"
+      }
+    ],
     "combination_risk": null
   }
 ]
