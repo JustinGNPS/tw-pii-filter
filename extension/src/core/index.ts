@@ -6,6 +6,12 @@
  */
 
 import { detectApiKey, isValidApiKey } from './api_key';
+import {
+  WARNING_THRESHOLD,
+  computeCombinationRisk,
+  extractAge,
+  isWarningWorthy,
+} from './combination_risk';
 import { renumberReplacements, resolveOverlaps } from './conflict_resolver';
 import { detectCreditCard, isValidCreditCard } from './credit_card';
 import { detectEmail, isValidEmail } from './email';
@@ -14,6 +20,7 @@ import { detectTwNhi, isValidTwNhi } from './tw_nhi';
 import { detectTwPhoneL, isValidTwPhoneL } from './tw_phone_l';
 import { detectTwPhoneM, isValidTwPhoneM } from './tw_phone_m';
 import { detectTwTax, isValidTwTax } from './tw_tax';
+import { NER_ALLOW_TYPES } from './types';
 import type { DetectionResult, Detector, Span } from './types';
 
 export * from './types';
@@ -36,6 +43,11 @@ export {
   isValidTwTax,
   resolveOverlaps,
   renumberReplacements,
+  // Layer 3
+  computeCombinationRisk,
+  isWarningWorthy,
+  extractAge,
+  WARNING_THRESHOLD,
 };
 
 /**
@@ -73,20 +85,33 @@ export function detectAll(text: string, extraSpans?: Span[] | null): DetectionRe
 
   if (extraSpans && extraSpans.length > 0) {
     validateExtraSpans(extraSpans);
-    spans.push(...extraSpans);
+    // 型別白名單掛在 Layer 4 仲裁的**上游**：不採信的型別從一開始就不存在，
+    // 不進仲裁、不算進提示筆數、也不進 Layer 3 組合風險分數。
+    // 這與「偵測到但預設不勾選」是兩個不同機制，見 types.ts 的 NER_ALLOW_TYPES。
+    spans.push(...extraSpans.filter(isTrustedSpan));
   }
 
   spans = resolveOverlaps(spans);
   spans = renumberReplacements(spans);
 
-  // Layer 3（組合風險評分，見 docs/interface.md「組合風險評分」一節）尚未
-  // 移植到 TypeScript 版：Python 版的 compute_combination_risk() 需要
-  // ADDRESS/POSITION 這類準識別子 span（來自語意層/NER，擴充目前沒有）
-  // 與 AGE/GENDER 的獨立正則掃描（TS 版尚無對應實作）。型別先對齊
-  // Python 版的契約（見 CombinationRisk），實際計算邏輯留待移植
-  // core/risk/combination_risk.py 時一併補上——因此一律回傳 null，
-  // 而不是省略這個欄位，避免下游誤把「沒有欄位」跟「沒有風險」混為一談。
-  return { text, spans, combination_risk: null };
+  // Layer 3：組合風險評分（見 docs/interface.md「組合風險評分」一節）。
+  // 依契約，score 為 0（準識別子共現數 < 2）時整個欄位為 null，
+  // 而不是回傳 score: 0 的空殼物件——下游只要檢查是否為 null 即可。
+  const risk = computeCombinationRisk(text, spans);
+  const combination_risk = risk.score > 0 ? risk : null;
+
+  return { text, spans, combination_risk };
+}
+
+/**
+ * 語意層的這筆 span 是否值得採信。
+ *
+ * 只對 `source === "model"` 的 span 套用白名單——規則層的型別不受影響
+ * （規則層有 checksum / 格式驗證，本來就可信）。
+ */
+function isTrustedSpan(span: Span): boolean {
+  if (span.source !== 'model') return true;
+  return NER_ALLOW_TYPES.has(span.type);
 }
 
 /**
