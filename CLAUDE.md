@@ -97,7 +97,7 @@ detect_all(text: str, extra_spans: list = None) -> dict
 
 **兩個實作上的坑**：
 1. **從後往前替換**（座標由大到小），否則前面替換造成的長度變化會讓後面的座標失效
-2. **型別代碼大小寫**：語意層模型原生輸出過小寫代碼，`proxy/mapping.normalize_type()` 有做防禦性正規化，但不要假設下游一定是大寫
+2. **型別代碼大小寫**：語意層模型原生輸出過小寫代碼，`core/redact/mapping.normalize_type()` 有做防禦性正規化，但不要假設下游一定是大寫
 
 ---
 

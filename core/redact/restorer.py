@@ -12,7 +12,7 @@
 import codecs
 import json
 
-from proxy.mapping import MAX_TOKEN_LENGTH, TOKEN_PATTERN, MappingTable
+from core.redact.mapping import MAX_TOKEN_LENGTH, TOKEN_PATTERN, MappingTable
 
 
 def _json_inner(value: str) -> str:

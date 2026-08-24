@@ -38,7 +38,7 @@ from fastapi.responses import HTMLResponse
 
 from proxy import config, detector, masker, risk
 from proxy.cache import DetectionCache
-from proxy.mapping import MappingTable, normalize_type
+from core.redact.mapping import MappingTable, normalize_type
 
 router = APIRouter(prefix="/demo", tags=["demo"])
 

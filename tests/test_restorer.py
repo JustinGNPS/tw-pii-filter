@@ -7,8 +7,8 @@ import json
 
 import pytest
 
-from proxy import restorer
-from proxy.mapping import MappingTable
+from core.redact import restorer
+from core.redact.mapping import MappingTable
 
 
 @pytest.fixture

@@ -63,7 +63,7 @@ cd extension && npm test
 
 `detect_all()` 每次呼叫都從 1 重新編號。同一個真值這次可能是 `[TW_ID_1]`、下次變 `[TW_ID_2]`，而 `[TW_ID_1]` 還可能被別的真值佔用——還原時會**把兩個人的個資對調**，比洩漏更嚴重。（問題由 B 在 PR #3 提出，proxy 端用同樣方式規避。）
 
-擴充端由 [`src/placeholder.ts`](src/placeholder.ts) 的 `PlaceholderAllocator` 自行配號，只採用 `detect_all` 的 `type` 與座標。型別代碼一律先經過 `normalizeType()`（對應 proxy 的 `mapping.normalize_type()`），確保兩個載體產生的佔位符格式一致、還原得回去。
+擴充端由 [`src/placeholder.ts`](src/placeholder.ts) 的 `PlaceholderAllocator` 自行配號，只採用 `detect_all` 的 `type` 與座標。型別代碼一律先經過 `normalizeType()`（對應 `core/redact/mapping.normalize_type()`），確保兩個載體產生的佔位符格式一致、還原得回去。
 
 作用域刻意限定在**單一對話**：
 

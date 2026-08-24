@@ -83,7 +83,7 @@ QQ, address, book, company, email, game, government,
 mobile, movie, name, organization, position, scene, vx
 ```
 
-模型原生輸出是**小寫**，經 `proxy/mapping.normalize_type()` 正規化為大寫。
+模型原生輸出是**小寫**，經 `core/redact/mapping.normalize_type()` 正規化為大寫。
 
 #### 第 2 層：系統實際採信的型別（白名單 4 種）
 

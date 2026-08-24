@@ -6,8 +6,8 @@
 
 import pytest
 
-from proxy import mapping
-from proxy.mapping import (
+from core.redact import mapping
+from core.redact.mapping import (
     DEFAULT_IDLE_TIMEOUT,
     FALLBACK_TYPE,
     TOKEN_PATTERN,

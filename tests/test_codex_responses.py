@@ -18,8 +18,9 @@ import pytest
 import respx
 from fastapi.testclient import TestClient
 
-from proxy import config, detector, main, restorer
-from proxy.mapping import MappingTable
+from core.redact import restorer
+from proxy import config, detector, main
+from core.redact.mapping import MappingTable
 
 UPSTREAM = "https://upstream.test/v1"
 

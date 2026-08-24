@@ -22,7 +22,7 @@ C 的擴充是「單一對話、12 小時過期」，proxy 目前是「整個行
 """
 
 from core.rules.tw_id import _LETTER_MAP, _WEIGHTS
-from proxy.mapping import MappingTable
+from core.redact.mapping import MappingTable
 from proxy.masker import mask_text
 from core.rules import detect_all
 
