@@ -98,6 +98,38 @@ NAME, ADDRESS, POSITION, COMPANY
 
 **下游能拿到的語意層 `type` 只有這 4 種。**
 
+> **註一：進了白名單 ≠ 一定會被遮蔽。**
+> 白名單只決定「採信這個偵測結果」，不決定「要不要換成佔位符」。這 4 種裡
+> `POSITION` 與 `COMPANY` 預設落在 `proxy/config.py` 的 `SKIP_TYPES`
+> （`DEFAULT_SKIP_TYPES = "POSITION,COMPANY"`）—— **偵測到、span 存在、
+> 仍計入組合風險分數，但不做字串替換**。
+>
+> 兩個機制的差別：
+>
+> - `NER_ALLOW_TYPES`（白名單）＝「這個型別不可信，當作沒偵測到」。
+>   span 從一開始就不存在，不參與 Layer 4 仲裁、不計入 log 筆數、
+>   不計入組合風險分數。
+> - `SKIP_TYPES`＝「偵測是對的，但政策上不遮」。span 仍然存在，
+>   而且**正是它在計入組合風險分數**（`proxy/risk.py` 餵給評分的是
+>   「遮蔽後文字＋沒被遮掉的 spans」，沒被遮掉的型別才是真正的殘餘風險）。
+>
+> 這點對照著實作時特別要緊：照本節做出「白名單 4 種都遮掉」的實作，
+> 會把職稱與公司名一起換成佔位符，行為與 proxy 不一致。
+
+> **註二：`PII_NER_ALLOW_TYPES` 設成空字串會「全部採信」，不是「全部排除」。**
+> `_keep_allowed_types()` 第一行是：
+>
+> ```python
+> if spans is None or not config.NER_ALLOW_TYPES:
+>     return spans
+> ```
+>
+> 白名單為空時整個過濾機制關閉、退回加白名單之前的行為（14 種全收）。
+> 這是刻意留的除錯開關（方便比對加白名單前後的差異），但代價是
+> 在 `.env` 寫一行 `PII_NER_ALLOW_TYPES=` 就會**靜默回到第 1 層**，
+> 正好落回本節要防的狀態。要「一種都不採信」請直接關掉語意層
+> （`PII_ENABLE_NER=0`），不要把白名單清空。
+
 #### 第 3 層：被排除的雜訊型別（其餘 10 種）
 
 ```
