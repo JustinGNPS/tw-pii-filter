@@ -6,7 +6,7 @@
 import json
 
 from proxy import config, masker
-from proxy.mapping import MappingTable
+from core.redact.mapping import MappingTable
 
 
 def test_從後往前替換_後面的座標不會偏掉():

@@ -35,11 +35,11 @@ from proxy import (
     detector,
     forward,
     masker,
-    restorer,
     risk,
     traffic,
 )
-from proxy.mapping import MappingTable
+from core.redact import restorer
+from core.redact.mapping import MappingTable
 
 # Windows 主控台預設是 cp950，中文警告訊息可能會炸掉；統一轉成 utf-8
 for _stream in (sys.stdout, sys.stderr):

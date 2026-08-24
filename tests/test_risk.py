@@ -13,7 +13,7 @@ import json
 import logging
 
 from proxy import config, main, masker, risk
-from proxy.mapping import MappingTable
+from core.redact.mapping import MappingTable
 
 # 這段文字四個準識別子齊聚（年齡／性別／地址／職稱），是報告 4.3 節那個
 # 「明碼個資全遮掉仍能指認到人」的典型例子。

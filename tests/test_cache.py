@@ -9,7 +9,7 @@ import pytest
 
 from proxy import detector, masker
 from proxy.cache import DetectionCache
-from proxy.mapping import MappingTable
+from core.redact.mapping import MappingTable
 
 
 @pytest.fixture

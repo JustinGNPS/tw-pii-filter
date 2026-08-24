@@ -184,7 +184,7 @@ agent 每次請求都重送整段對話歷史，同一份檔案內容會被重�
 會產生 `[name_1]`，而還原用的 `TOKEN_PATTERN` 只認大寫 —— **遮蔽成功、還原
 靜默失效**，佔位符會被留在使用者的檔案裡（不拋錯、不報警告，很難查）。
 
-`proxy/mapping.normalize_type()` 在**入口**（`token_for()`）一律先把型別代碼
+`core/redact/mapping.normalize_type()` 在**入口**（`token_for()`）一律先把型別代碼
 轉成 `[A-Z][A-Z_]*` 的形式。只做格式正規化，不做語意改名 —— 不會把 `name`
 自作主張改成 `PERSON`，型別代碼叫什麼是 `interface.md` 的決定，不是 proxy 的。
 
@@ -755,7 +755,7 @@ PowerShell 7（`pwsh`）的 `Get-Content` 預設編碼與 5.1 不同，理論上
 AI 讓 agent 知道「要怎麼改檔案」有兩種方式：**純文字回覆**
 （`delta.content`，Aider 這類走 diff-edit 格式的工具用這條）、
 **function calling**（`delta.tool_calls[].function.arguments`，OpenCode
-這類用內建編輯工具的 agent 走這條）。`proxy/restorer.py` 的
+這類用內建編輯工具的 agent 走這條）。`core/redact/restorer.py` 的
 `SSERestorer` 一開始只處理了 `delta.content`——不是轉換邏輯寫錯，是這段
 程式碼從來沒讀過 `tool_calls` 這個欄位。
 
@@ -909,19 +909,27 @@ detect_ner(text))`，由 `PII_ENABLE_NER` 控制是否啟用。
 
 ### 對 C（瀏覽器擴充）
 
-兩個載體共用同一套遮蔽 / 還原邏輯。目前三個模組與 proxy 無耦合，
-可直接取用：
+兩個載體共用同一套遮蔽 / 還原邏輯，住在 **`core/redact/`**（issue #23，
+已於此搬遷完成）。這個套件與 proxy 無耦合 —— 不認得 API 協定、
+不讀環境變數，拿到的只是「一段文字加一組 span」：
 
 | 模組 | 提供什麼 |
 |---|---|
-| `mapping.MappingTable` | `token_for(type, value)` / `value_for(token)` / `restore_text(text)` |
-| `masker.mask_text(text, spans, table)` | 單段文字的遮蔽 |
-| `restorer.restore_text(text, table)` | 單段文字的還原 |
-| `restorer.StreamRestorer` | 逐段抵達的文字（C 若有串流需求） |
+| `core.redact.mapping.MappingTable` | `token_for(type, value)` / `value_for(token)` / `restore_text(text)` |
+| `core.redact.mask_text(text, spans, table)` | 單段文字的遮蔽 |
+| `core.redact.restore_text(text, table)` | 單段文字的還原 |
+| `core.redact.StreamRestorer` | 逐段抵達的文字（C 若有串流需求） |
 
-**待討論**：目前這些檔案放在 `proxy/` 底下，語意上屬於 B 的載體。
-若 C 要共用，建議搬到中性的套件（例如 `core/redact/`），由兩個載體共同引用。
-請 C 確認需求後一起決定，避免 C 直接 `from proxy import ...`。
+**沒搬過去的是 payload 層**（`proxy/masker.py` 的 `mask_payload()`、
+`proxy/detector.py`、`proxy/config.py`、`proxy/risk.py`）。分界線是
+「認不認得 API 協定」：從 OpenAI／Anthropic 的 JSON 挖出該掃的欄位、
+讀 proxy 的環境變數、印風險警示，都是載體專屬的事，搬進 `core/` 會讓
+它反過來相依 `proxy/`。C 面對的是使用者貼上的一段文字，本來就用不到。
+
+**一個要講準的地方**：`core/redact/` 是 Python，而擴充是獨立的
+TypeScript 實作，**不會直接 import 這份程式碼**。它的角色是「唯一的
+權威參考實作」—— 佔位符格式、發號規則、查不到時的行為以這裡為準，
+不是各自從頭想。搬遷帶來的是「只有一份權威定義」，不是自動共用。
 
 **提醒 C**：若直接使用 `detect_all()` 回傳的 `replacement` 作為佔位符，
 會踩到決定 3 描述的跨請求號碼錯亂問題。

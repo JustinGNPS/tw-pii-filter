@@ -1,29 +1,36 @@
-"""遮蔽：把請求 payload 裡的真實個資換成佔位符。
+"""遮蔽 payload：把請求裡的真實個資換成佔位符。
 
-流程：`detector.scan_payload()` 找出每個文字欄位裡的 span
-→ `MappingTable` 配佔位符 → **從後往前**替換 → 寫回原欄位。
+純字串層的遮蔽邏輯住在 `core/redact/masker.py`（兩個載體共用，issue #23），
+這裡放的是 **proxy 專屬**的那一半：
 
-## 為什麼一定要從後往前
+流程：`detector.scan_payload()` 從 OpenAI／Anthropic 的 payload 裡找出每個
+文字欄位與其中的 span → 交給 `core.redact.mask_text()` 替換 → 寫回原欄位
+→ 順便算組合風險。
 
-替換會改變文字長度。`A123456789`（10 字）換成 `[TW_ID_1]`（9 字）之後，
-整段文字短了 1 個字，**後面所有 span 的 start/end 就全部偏掉了**。
-由座標大的往小的替換，每次替換只影響已經處理完的部分。
+## 為什麼這一半不搬進 core
 
-A 的 `detect_all()` 內部已做 Layer 4 重疊仲裁，spans 保證互不重疊，
-因此這裡不需要再處理重疊情形。
+它認得 API 協定（`detector`）、讀 proxy 的環境變數（`config`）、印 proxy 的
+風險警示（`risk`）。搬進中性套件會讓 `core/` 反過來相依 `proxy/`，本末倒置。
+C 的擴充面對的是使用者貼上的一段文字，本來就用不到 payload 走訪。
 
 ## 不是每一筆偵測到的東西都該遮
 
 語意層會回傳職稱這類「認得出來、但不是個資」的實體。遮掉它們對隱私沒有
 任何幫助，卻會讓 agent 讀不懂上下文。哪些型別跳過由 `config.SKIP_TYPES`
-決定（預設 `POSITION`），理由寫在 `proxy/config.py`。
+決定（預設 `POSITION`／`COMPANY`），理由寫在 `proxy/config.py`。
+
+**這個預設是政策，所以由這裡注入**：`core.redact.mask_text()` 自己不帶任何
+預設值（`skip_types=None` 在那邊是「一種都不跳過」），proxy 的預設在
+`resolve_skip_types()` 解出來之後才傳進去。
 """
 
 from collections.abc import Iterable
 
+from core.redact.mapping import MappingTable, normalize_type
+from core.redact.masker import mask_text as _mask_text
+from core.redact.masker import spans_to_mask
 from proxy import config, detector, risk
 from proxy.cache import DetectionCache
-from proxy.mapping import MappingTable, normalize_type
 
 
 def resolve_skip_types(skip_types: Iterable[str] | None) -> frozenset[str]:
@@ -36,29 +43,19 @@ def resolve_skip_types(skip_types: Iterable[str] | None) -> frozenset[str]:
     return frozenset(normalize_type(item) for item in skip_types)
 
 
-def _to_mask(spans: list[dict], skip: frozenset[str]) -> list[dict]:
-    """濾掉不該遮蔽的型別。"""
-    return [span for span in spans if normalize_type(span["type"]) not in skip]
-
-
 def mask_text(
     text: str,
     spans: list[dict],
     table: MappingTable,
     skip_types: Iterable[str] | None = None,
 ) -> str:
-    """把單一段文字裡的所有 span 換成佔位符（跳過的型別原樣保留）。"""
-    skip = resolve_skip_types(skip_types)
-    kept = sorted(_to_mask(spans, skip), key=lambda s: s["start"])
+    """把單一段文字裡的所有 span 換成佔位符（跳過的型別原樣保留）。
 
-    # 先依「出現順序」配號碼，再從後往前替換。
-    # 兩件事要分開做：替換必須倒著來（否則座標偏掉），但發號碼不該跟著倒過來，
-    # 不然文章裡第一個出現的人會拿到比較大的號碼。功能上無害，但看的人會困惑。
-    tokens = [table.token_for(span["type"], span["text"]) for span in kept]
-
-    for span, token in zip(reversed(kept), reversed(tokens)):
-        text = text[: span["start"]] + token + text[span["end"] :]
-    return text
+    與 `core.redact.mask_text()` 的差別只有一個：`skip_types=None` 在這裡
+    代表「用 proxy 的預設（`config.SKIP_TYPES`）」，在 core 那邊代表
+    「一種都不跳過」。替換邏輯（從後往前、發號順序）完全共用同一份。
+    """
+    return _mask_text(text, spans, table, resolve_skip_types(skip_types))
 
 
 def mask_payload(
@@ -127,7 +124,7 @@ def mask_payload_with_risk(
         if residual:
             residual_by_path[result["path"]] = residual
 
-        spans = _to_mask(result["spans"], skip)
+        spans = spans_to_mask(result["spans"], skip)
         if not spans:
             continue  # 這個欄位偵測到的全被跳過，原樣保留
         detector.set_at(
