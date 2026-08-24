@@ -749,5 +749,66 @@
       }
     ],
     "combination_risk": null
+  },
+  {
+    "text": "信箱 ａｂｃ＠ｅｘａｍｐｌｅ．ｃｏｍ",
+    "spans": [
+      {
+        "start": 3,
+        "end": 18,
+        "type": "EMAIL",
+        "text": "ａｂｃ＠ｅｘａｍｐｌｅ．ｃｏｍ",
+        "confidence": 0.95,
+        "source": "rule",
+        "replacement": "[EMAIL_1]"
+      }
+    ],
+    "combination_risk": null
+  },
+  {
+    "text": "手機 ０９１２－３４５－６７８",
+    "spans": [
+      {
+        "start": 3,
+        "end": 15,
+        "type": "TW_PHONE_M",
+        "text": "０９１２－３４５－６７８",
+        "confidence": 0.9,
+        "source": "rule",
+        "replacement": "[TW_PHONE_M_1]"
+      }
+    ],
+    "combination_risk": null
+  },
+  {
+    "text": "市話 （０２）２３４５６７８９",
+    "spans": [
+      {
+        "start": 3,
+        "end": 15,
+        "type": "TW_PHONE_L",
+        "text": "（０２）２３４５６７８９",
+        "confidence": 0.85,
+        "source": "rule",
+        "replacement": "[TW_PHONE_L_1]"
+      }
+    ],
+    "combination_risk": null
+  },
+  {
+    "text": "３５歲男性，住新竹",
+    "spans": [],
+    "combination_risk": {
+      "score": 0.5,
+      "contributing_types": [
+        "AGE",
+        "GENDER"
+      ],
+      "risk_level": "中",
+      "suggestions": [
+        "「35歲」建議泛化為「35-39歲」",
+        "若非必要，建議省略性別資訊"
+      ]
+    }
   }
 ]

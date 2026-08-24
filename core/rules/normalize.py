@@ -1,63 +1,34 @@
-"""全形 → 半形正規化（偵測前置處理）。
+"""全形 ASCII 字元正規化。"""
 
-## 為什麼需要
-
-全形英數在中文輸入環境是**很自然會出現**的寫法——注音輸入法的全形模式、
-從 Word / PDF / 網頁表單複製貼上的內容都可能帶全形英數。但規則層的正則
-用的是 ``[0-9]`` / ``[A-Za-z]``，對不到 U+FF10–FF19 / U+FF21–FF5A。
-
-實測（issue #21、#27）：
-
-    '我的手機是0912345678'            -> [('TW_PHONE_M', '0912345678')]
-    '我的手機是０９１２３４５６７８'    -> []                              ❌
-
-後果是使用者貼一份含全形統編的合約，面板顯示「未偵測到敏感資訊」，
-個資原封不動送出去——**使用者以為已遮蔽、實際沒有**，比不做更危險。
-
-## 為什麼是定點映射，不是 NFKC
-
-``unicodedata.normalize('NFKC', text)`` 看起來更省事，但**不保證長度不變**：
-
-    '０９１２３４５６７８'  10 -> '0912345678'      10   等長 ✅
-    '㍿'                    1 -> '株式会社'         4   長度改變 ⚠️
-    'ﬁle'                   3 -> 'file'            4   長度改變 ⚠️
-
-長度一變，後面所有 span 的 start/end 就對不回原文，而 B 的遮蔽是
-「從後往前依座標替換」，座標錯位會直接把文字切壞。
-
-因此這裡只對**全形英數與全形空格**做定點映射。這個範圍是嚴格 1:1、
-字元數保證不變，所以正規化後的座標可以直接沿用到原文，不需要維護對應表。
-
-TypeScript 版對應實作見 ``extension/src/core/normalize.ts``，兩版行為必須一致。
-"""
-
-# 全形英數與符號（U+FF01–U+FF5E）對半形（U+0021–U+007E）是固定 offset 0xFEE0。
-# 這一段完整涵蓋全形的「！」到「～」，含數字、大小寫英文與常見符號（＠、．、－）。
-_FULLWIDTH_START = 0xFF01
-_FULLWIDTH_END = 0xFF5E
-_FULLWIDTH_OFFSET = 0xFEE0
-
-# 全形空格（表意空格）
-_IDEOGRAPHIC_SPACE = "　"
-
-_TRANSLATION_TABLE = {
-    code: code - _FULLWIDTH_OFFSET
-    for code in range(_FULLWIDTH_START, _FULLWIDTH_END + 1)
+# 全形 ASCII 字元→半形的對照表。
+#
+# 涵蓋整個全形 ASCII 區段 U+FF01-FF5E（對半形 U+0021-U+007E 是固定 offset
+# 0xFEE0），外加全形空格 U+3000。
+#
+# 一開始只映射了英數字三段（U+FF10-FF19、U+FF21-FF3A、U+FF41-FF5A），
+# 但實測發現**全形符號一樣會讓偵測整個失效**，而且都是真實會出現的寫法：
+#
+#     '信箱 ａｂｃ＠ｅｘａｍｐｌｅ．ｃｏｍ'   -> []   全形 ＠ 與 ．
+#     '手機 ０９１２－３４５－６７８'        -> []   全形連字號
+#     '市話 （０２）２３４５６７８９'         -> []   全形括號
+#
+# 這些字元在正則裡是字面值（EMAIL 的 @ 與 .、TW_PHONE_M 的 -、TW_PHONE_L 的
+# 括號），全形版本一律對不到。既然整段都是 1:1 等長對應，就沒有理由只映射一部分。
+#
+# 特意不做 NFKC 全量轉換：
+# NFKC 會展開合字（ﬁ → fi）與相容字（㍿ → 株式会社），轉換前後長度改變，
+# 導致後續的座標對應失效。全形 ASCII 是 1:1 映射，長度不變，座標可直接沿用。
+_FULLWIDTH_TABLE = {
+    code: code - 0xFEE0 for code in range(0xFF01, 0xFF5E + 1)
 }
-_TRANSLATION_TABLE[ord(_IDEOGRAPHIC_SPACE)] = ord(" ")
+_FULLWIDTH_TABLE[0x3000] = 0x20  # 全形空格
 
 
-def to_half_width(text: str) -> str:
-    """把全形英數/符號轉成半形，**保證字元數不變**。
+def normalize_fullwidth(text: str) -> str:
+    """全形 ASCII 字元（U+FF01-FF5E）與全形空格（U+3000）正規化為半形。
 
-    不做其他 Unicode 正規化——見模組說明關於 NFKC 的部分。
+    轉換前後字串長度不變，偵測到的 span 座標可以直接套用回原始文字。
+
+    TypeScript 版對應實作見 ``extension/src/core/normalize.ts``，兩版行為必須一致。
     """
-    return text.translate(_TRANSLATION_TABLE)
-
-
-def has_full_width(text: str) -> bool:
-    """這段文字含有需要正規化的全形字元嗎（用來略過不必要的處理）。"""
-    return any(
-        _FULLWIDTH_START <= ord(char) <= _FULLWIDTH_END or char == _IDEOGRAPHIC_SPACE
-        for char in text
-    )
+    return text.translate(_FULLWIDTH_TABLE)
