@@ -78,7 +78,8 @@ async def scan(payload: dict) -> dict:
     skip = masker.resolve_skip_types(None)
 
     started = time.perf_counter()
-    spans = detector.detect(text, cache=DEMO_CACHE)["spans"]
+    detection = detector.detect(text, cache=DEMO_CACHE)
+    spans = detection["spans"]
     detect_ms = (time.perf_counter() - started) * 1000
 
     started = time.perf_counter()
@@ -118,6 +119,11 @@ async def scan(payload: dict) -> dict:
         if item["token"]:
             mapping[item["token"]] = item["text"]
 
+    # Demo 同時呈現兩種視角：
+    # - original_risk：原文含有哪些準識別子，供人口統計上限估算與泛化模擬。
+    # - risk：真正送往雲端的遮蔽後文字還剩多少風險，維持既有欄位契約。
+    # 兩者分開，才能說明「原本可指認，但地址遮蔽後風險下降」的防護效果。
+    original_risk = risk.assess(text, spans) if text.strip() else None
     residual = risk.residual_spans(spans, skip)
     risk_result = risk.assess(masked, residual) if text.strip() else None
 
@@ -126,6 +132,7 @@ async def scan(payload: dict) -> dict:
         "spans": detail,
         "counts": counts,
         "mapping": [{"token": k, "value": v} for k, v in mapping.items()],
+        "original_risk": original_risk,
         "risk": risk_result,
         "timing": {"detect_ms": round(detect_ms, 2), "mask_ms": round(mask_ms, 2)},
         "cache": DEMO_CACHE.stats(),
