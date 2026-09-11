@@ -21,6 +21,8 @@ A 的 `detect_all()` 內部已做 Layer 4 重疊仲裁，spans 保證互不重�
 
 from collections.abc import Iterable
 
+from core.risk import reduction
+from core.risk.combination_risk import compute_combination_risk
 from proxy import config, detector, risk
 from proxy.cache import DetectionCache
 from proxy.mapping import MappingTable, normalize_type
@@ -66,13 +68,16 @@ def mask_payload(
     table: MappingTable,
     cache: DetectionCache | None = None,
     skip_types: Iterable[str] | None = None,
+    risk_reduction_policy: str | None = None,
 ) -> dict[str, int]:
     """就地遮蔽整包 payload，回傳「型別 -> 遮蔽筆數」的摘要。
 
     只要遮蔽結果、不需要組合風險評分時用這個；兩者都要就用
     `mask_payload_with_risk()`。
     """
-    counts, _ = mask_payload_with_risk(payload, table, cache, skip_types)
+    counts, _ = mask_payload_with_risk(
+        payload, table, cache, skip_types, risk_reduction_policy
+    )
     return counts
 
 
@@ -101,6 +106,7 @@ def mask_payload_with_risk(
     table: MappingTable,
     cache: DetectionCache | None = None,
     skip_types: Iterable[str] | None = None,
+    risk_reduction_policy: str | None = None,
 ) -> tuple[dict[str, int], dict | None]:
     """就地遮蔽整包 payload，回傳 (遮蔽筆數摘要, 組合風險評分)。
 
@@ -117,6 +123,11 @@ def mask_payload_with_risk(
     完全一樣。
     """
     skip = resolve_skip_types(skip_types)
+    reduction_policy = reduction.normalize_policy(
+        config.RISK_REDUCTION_POLICY
+        if risk_reduction_policy is None
+        else risk_reduction_policy
+    )
     counts: dict[str, int] = {}
     residual_by_path: dict[detector.Path, list[dict]] = {}
 
@@ -137,7 +148,106 @@ def mask_payload_with_risk(
             pii_type = normalize_type(span["type"])
             counts[pii_type] = counts.get(pii_type, 0) + 1
 
+    if reduction_policy != reduction.POLICY_OFF:
+        # 第二趟只走訪已經遮蔽完成的文字，不重新跑 NER。除了較省成本，也確保
+        # 規劃依據就是「雲端原本會看到的版本」，而不是含明碼 PII 的原文。
+        for path, text in list(detector.extract_texts(payload)):
+            reduced, final_spans, _, _, extra_counts = reduce_residual_text(
+                text,
+                residual_by_path.get(path, []),
+                table,
+                reduction_policy,
+            )
+            if reduced != text:
+                detector.set_at(payload, path, reduced)
+            if final_spans:
+                residual_by_path[path] = final_spans
+            else:
+                residual_by_path.pop(path, None)
+            for pii_type, count in extra_counts.items():
+                counts[pii_type] = counts.get(pii_type, 0) + count
+
     return counts, _assess_risk(payload, residual_by_path)
+
+
+def _locate_surviving_spans(
+    text: str, spans: list[dict], selected_types: set[str]
+) -> list[dict]:
+    """在已遮蔽文字裡重新定位仍保留的 NER span。
+
+    直接識別子換成佔位符後字串長度會改變，所以不能沿用原始 start/end；但
+    SKIP_TYPES 的真值仍原樣存在，依原始出現順序搜尋即可取得安全的新座標。
+    """
+    located: list[dict] = []
+    cursor = 0
+    for span in sorted(spans, key=lambda item: item.get("start", 0)):
+        pii_type = normalize_type(span.get("type", ""))
+        if pii_type not in selected_types or pii_type in reduction.TEXT_GENERALIZATION_TYPES:
+            continue
+        value = span.get("text") or ""
+        if not value:
+            continue
+        start = text.find(value, cursor)
+        if start < 0:
+            start = text.find(value)
+        if start < 0:
+            continue
+        end = start + len(value)
+        located.append({**span, "type": pii_type, "start": start, "end": end})
+        cursor = end
+    return located
+
+
+def reduce_residual_text(
+    text: str,
+    residual_spans: list[dict],
+    table: MappingTable,
+    policy: str,
+) -> tuple[str, list[dict], dict, dict, dict[str, int]]:
+    """對一段遮蔽後文字套用 opt-in 降階，供正式 proxy 與 Demo 共用。"""
+    normalized = reduction.normalize_policy(policy)
+    initial = compute_combination_risk(text, residual_spans)
+    plan = reduction.plan_reduction(initial, normalized)
+    selected = set(plan["applied_types"])
+
+    located = _locate_surviving_spans(text, residual_spans, selected)
+    extra_counts: dict[str, int] = {}
+    if located:
+        text = mask_text(text, located, table, skip_types=())
+        for span in located:
+            pii_type = normalize_type(span["type"])
+            extra_counts[pii_type] = extra_counts.get(pii_type, 0) + 1
+
+    text, generalized = reduction.generalize_text_types(text, selected)
+    generalized_by_type = {item["type"]: item for item in generalized}
+    masked_counts = {item: count for item, count in extra_counts.items()}
+
+    final_spans = [
+        span
+        for span in residual_spans
+        if normalize_type(span.get("type", "")) not in selected
+    ]
+    final = compute_combination_risk(text, final_spans)
+
+    enriched_steps = []
+    for step in plan["steps"]:
+        item = dict(step)
+        if step["method"] == "generalize":
+            action = generalized_by_type.get(step["type"], {})
+            item["occurrences"] = action.get("occurrences", 0)
+            item["replacement"] = action.get("replacement", "")
+        else:
+            item["occurrences"] = masked_counts.get(step["type"], 0)
+            item["replacement"] = "可還原佔位符"
+        enriched_steps.append(item)
+
+    plan = {**plan, "steps": enriched_steps, "final_score": final["score"]}
+    if normalized == reduction.POLICY_STRICT:
+        plan["met_target"] = not final["contributing_types"]
+    elif normalized != reduction.POLICY_OFF:
+        plan["met_target"] = final["score"] < float(plan["threshold"])
+
+    return text, final_spans, final, plan, extra_counts
 
 
 def _assess_risk(

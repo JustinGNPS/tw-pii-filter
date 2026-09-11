@@ -281,7 +281,9 @@ def _mask_request(path: str, body: bytes, table: MappingTable) -> tuple[bytes, f
         payload = json.loads(body.decode("utf-8"))
         issued_before = table.issued_counts()
         counts, combination_risk = masker.mask_payload_with_risk(payload, table)
-        if counts:
+        # 自動降階可能只把 AGE/GENDER 泛化，不會產生佔位符計數；只看 counts
+        # 會把已修改的 payload 丟掉。策略啟用時一律重新序列化最安全。
+        if counts or config.RISK_REDUCTION_POLICY != "off":
             body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         _log_new_values(issued_before, table)
         _log_combination_risk(combination_risk)

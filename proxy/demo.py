@@ -36,6 +36,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse
 
+from core.risk import reduction
 from proxy import config, detector, masker, risk
 from proxy.cache import DetectionCache
 from proxy.mapping import MappingTable, normalize_type
@@ -75,6 +76,13 @@ async def scan(payload: dict) -> dict:
     if not isinstance(text, str):
         raise HTTPException(status_code=400, detail="text 必須是字串")
 
+    try:
+        reduction_policy = reduction.normalize_policy(
+            (payload or {}).get("risk_reduction_policy", "off")
+        )
+    except (AttributeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     skip = masker.resolve_skip_types(None)
 
     started = time.perf_counter()
@@ -83,8 +91,25 @@ async def scan(payload: dict) -> dict:
     detect_ms = (time.perf_counter() - started) * 1000
 
     started = time.perf_counter()
-    masked = masker.mask_text(text, spans, DEMO_TABLE, skip)
+    direct_masked = masker.mask_text(text, spans, DEMO_TABLE, skip)
+    original_risk = risk.assess(text, spans) if text.strip() else None
+    residual = risk.residual_spans(spans, skip)
+    masked, _, risk_result, reduction_plan, _ = masker.reduce_residual_text(
+        direct_masked,
+        residual,
+        DEMO_TABLE,
+        reduction_policy,
+    )
+    if not text.strip():
+        risk_result = None
     mask_ms = (time.perf_counter() - started) * 1000
+
+    additionally_masked = {
+        step["type"]
+        for step in reduction_plan["steps"]
+        if step["method"] == "mask" and step.get("occurrences", 0) > 0
+    }
+    effective_skip = skip - additionally_masked
 
     # 佔位符要用**實際發出去的那個**，不是偵測核心建議的 replacement ——
     # 號碼由 proxy 自己發（見 docs/B_design.md 決定 3），兩者可能不同。
@@ -92,7 +117,7 @@ async def scan(payload: dict) -> dict:
     detail = []
     for span in spans:
         pii_type = normalize_type(span["type"])
-        skipped = pii_type in skip
+        skipped = pii_type in effective_skip
         detail.append(
             {
                 "start": span["start"],
@@ -123,21 +148,20 @@ async def scan(payload: dict) -> dict:
     # - original_risk：原文含有哪些準識別子，供人口統計上限估算與泛化模擬。
     # - risk：真正送往雲端的遮蔽後文字還剩多少風險，維持既有欄位契約。
     # 兩者分開，才能說明「原本可指認，但地址遮蔽後風險下降」的防護效果。
-    original_risk = risk.assess(text, spans) if text.strip() else None
-    residual = risk.residual_spans(spans, skip)
-    risk_result = risk.assess(masked, residual) if text.strip() else None
-
     return {
+        "direct_masked": direct_masked,
         "masked": masked,
         "spans": detail,
         "counts": counts,
         "mapping": [{"token": k, "value": v} for k, v in mapping.items()],
         "original_risk": original_risk,
         "risk": risk_result,
+        "reduction": reduction_plan,
         "timing": {"detect_ms": round(detect_ms, 2), "mask_ms": round(mask_ms, 2)},
         "cache": DEMO_CACHE.stats(),
         "ner_enabled": config.ENABLE_NER,
-        "skip_types": sorted(skip),
+        "skip_types": sorted(effective_skip),
+        "configured_skip_types": sorted(skip),
     }
 
 

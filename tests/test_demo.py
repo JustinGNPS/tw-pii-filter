@@ -163,6 +163,62 @@ def test_demo頁面包含人口估算與風險比較介面(on):
     assert 'id="residualRiskStage"' in page
     assert 'id="populationEstimate"' in page
     assert "population_upper_bound" in page
+    assert 'id="riskPolicy"' in page
+    assert 'id="reductionPlan"' in page
+
+
+def test_balanced策略會做最少必要降階並保留職稱(on, monkeypatch):
+    text = "這位35歲的女性在測試公司擔任工程師。"
+    company = "測試公司"
+    position = "工程師"
+    spans = [
+        {
+            "start": text.index(company),
+            "end": text.index(company) + len(company),
+            "type": "COMPANY",
+            "text": company,
+            "confidence": 0.99,
+            "source": "model",
+        },
+        {
+            "start": text.index(position),
+            "end": text.index(position) + len(position),
+            "type": "POSITION",
+            "text": position,
+            "confidence": 0.99,
+            "source": "model",
+        },
+    ]
+    monkeypatch.setattr(
+        demo.detector,
+        "detect",
+        lambda _text, cache=None: {"text": _text, "spans": spans},
+    )
+
+    data = on.post(
+        "/demo/scan",
+        json={"text": text, "risk_reduction_policy": "balanced"},
+    ).json()
+
+    assert data["original_risk"]["score"] == 0.85
+    assert data["reduction"]["applied_types"] == ["GENDER", "COMPANY", "AGE"]
+    assert data["reduction"]["met_target"] is True
+    assert data["risk"]["score"] == 0.0
+    assert "[COMPANY_1]" in data["masked"]
+    assert "成年年齡層" in data["masked"]
+    assert "人士" in data["masked"]
+    assert "工程師" in data["masked"]
+    assert data["counts"]["COMPANY"] == 1
+
+
+def test_demo拒絕未知降階策略(on):
+    response = on.post(
+        "/demo/scan",
+        json={"text": SAMPLE, "risk_reduction_policy": "mystery"},
+    )
+
+    assert response.status_code == 400
+    assert "未知的風險降階策略" in response.json()["detail"]
 
 
 # ---------------------------------------------------------------- 隔離
