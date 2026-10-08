@@ -106,7 +106,7 @@ NAME, ADDRESS, POSITION, COMPANY
 >
 > 兩個機制的差別：
 >
-> - `NER_ALLOW_TYPES`（白名單）＝「這個型別不可信，當作沒偵測到」。
+> - 不在 `NER_ALLOW_TYPES`（白名單）內＝「這個型別不可信，當作沒偵測到」。
 >   span 從一開始就不存在，不參與 Layer 4 仲裁、不計入 log 筆數、
 >   不計入組合風險分數。
 > - `SKIP_TYPES`＝「偵測是對的，但政策上不遮」。span 仍然存在，
