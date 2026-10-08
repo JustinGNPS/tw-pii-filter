@@ -149,5 +149,57 @@ class DetectAllFullwidthTests(unittest.TestCase):
         self.assertEqual(result["text"], text)
 
 
+
+class FullwidthSymbolTests(unittest.TestCase):
+    """全形**符號**（不只英數字）同樣會讓偵測失效。
+
+    對照表原本只涵蓋英數字三段（U+FF10-FF19 / FF21-FF3A / FF41-FF5A），
+    但正則裡有不少字面符號——EMAIL 的 @ 與 .、TW_PHONE_M 的 -、
+    TW_PHONE_L 的括號——全形版本一律對不到，整筆偵測直接落空：
+
+        '信箱 ａｂｃ＠ｅｘａｍｐｌｅ．ｃｏｍ'  -> []
+        '手機 ０９１２－３４５－６７８'       -> []
+        '市話 （０２）２３４５６７８９'        -> []
+
+    既然整個 U+FF01-FF5E 區段都是 1:1 等長對應，沒有理由只映射一部分。
+
+    注意：以下皆為合成假資料。
+    """
+
+    def test_全形符號轉半形(self):
+        self.assertEqual(normalize_fullwidth("＠．－（）＿％＋"), "@.-()_%+")
+
+    def test_全形空格轉半形空格(self):
+        self.assertEqual(normalize_fullwidth("Ａ　Ｂ"), "A B")
+
+    def test_全形符號的信箱偵測得到(self):
+        text = "信箱 ａｂｃ＠ｅｘａｍｐｌｅ．ｃｏｍ"
+        spans = detect_all(text)["spans"]
+        self.assertEqual([s["type"] for s in spans], ["EMAIL"])
+        self.assertEqual(spans[0]["text"], "ａｂｃ＠ｅｘａｍｐｌｅ．ｃｏｍ")
+
+    def test_全形連字號的手機偵測得到(self):
+        spans = detect_all("手機 ０９１２－３４５－６７８")["spans"]
+        self.assertEqual([s["type"] for s in spans], ["TW_PHONE_M"])
+
+    def test_全形括號的市話偵測得到(self):
+        spans = detect_all("市話 （０２）２３４５６７８９")["spans"]
+        self.assertEqual([s["type"] for s in spans], ["TW_PHONE_L"])
+
+    def test_全形符號情境下座標仍符合介面約定(self):
+        for text in [
+            "信箱 ａｂｃ＠ｅｘａｍｐｌｅ．ｃｏｍ",
+            "手機 ０９１２－３４５－６７８",
+            "市話 （０２）２３４５６７８９",
+        ]:
+            with self.subTest(text=text):
+                for span in detect_all(text)["spans"]:
+                    self.assertEqual(text[span["start"]:span["end"]], span["text"])
+
+    def test_checksum_仍照常生效(self):
+        """正規化只是讓正則對得到，不該讓檢查碼錯誤的號碼變成有效。"""
+        # 12345672 檢查碼錯誤（12345670/1/5/6 才是有效的，已實測確認）
+        self.assertEqual(detect_all("統編 １２３４５６７２")["spans"], [])
+
 if __name__ == "__main__":
     unittest.main()

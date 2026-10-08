@@ -433,11 +433,22 @@ $env:PII_ENABLE_DEMO = "1"
 | `main.py` | FastAPI 應用、路由、log、串流處理 |
 | `forward.py` | httpx 轉發、標頭改寫、金鑰替換 |
 | `detector.py` | 包住 A 的 `detect_all()`、從 payload 挖出該掃的欄位 |
-| `masker.py` | 遮蔽（**從後往前**替換，避免座標位移） |
-| `restorer.py` | 還原（非串流整包替換 + SSE 逐事件重組） |
-| `mapping.py` | 對照表（記憶體、雙向、自己發號碼） |
+| `masker.py` | payload 層遮蔽（走訪欄位、注入 `SKIP_TYPES` 政策、算組合風險） |
 | `cache.py` | 偵測結果快取（LRU，key 為 SHA-256 指紋） |
 | `config.py` | 環境變數（金鑰一律走 `os.getenv()`，不寫進 log） |
+
+遮蔽與還原的**純字串邏輯**不在這裡，住在 `core/redact/`（兩個載體共用，
+issue #23）：
+
+| 檔案 | 職責 |
+|---|---|
+| `core/redact/masker.py` | 文字層遮蔽（**從後往前**替換，避免座標位移） |
+| `core/redact/restorer.py` | 還原（非串流整包替換 + SSE 逐事件重組） |
+| `core/redact/mapping.py` | 對照表（記憶體、雙向、自己發號碼） |
+
+分界線是：**認不認得 API 協定**。`core/redact/` 拿到的是「一段文字加一組
+span」，不知道 OpenAI 的 payload 長什麼樣、不讀環境變數；`proxy/` 這側負責
+從 payload 挖欄位、決定政策預設、印警示。
 
 ## 效能
 

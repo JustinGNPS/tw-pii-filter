@@ -17,19 +17,65 @@ export type RulePiiType =
   | 'API_KEY';
 
 /**
- * 語意層（Layer 2）的類別代碼。
+ * 語意層（Layer 2）模型定義的**完整** 14 種標籤。
  *
- * 來源是 `core/ner/detector.py`：模型的 `entity_group` 經 `.upper()` 後輸出。
- * 先前這裡列的 `name` / `address` / `position` 小寫版與 `PERSON` / `LOCATION` /
- * `ORG` 都已作廢——小寫版在型別代碼統一轉大寫後不再出現（見下），
- * `PERSON` 那組則是實測前的推測，從未真正產生過。
+ * 來源不是「測試句子撞見過哪些」，而是直接讀模型 `config.json` 的 `id2label`
+ * （去掉 BIO 前綴後取聯集），與 `core/ner/get_model_labels.py` 同一份清單。
  *
- * ⚠️ 這四個代碼**仍未列進 docs/interface.md 的類別代碼表**，
- * 而該文件自己要求「新增類別代碼時，應同步更新本文件並知會全隊」。
- * 目前三個模組各自從 PR 討論裡抄代碼，這正是本檔案上一版會過時的原因。
- * 已請 A 補進 interface.md；補上後這裡應以文件為準。
+ * ## 這是通用領域中文 NER，不是 PII 專用模型
+ *
+ * `BOOK` / `GAME` / `MOVIE` / `SCENE` 根本不是個資，`EMAIL` / `MOBILE` 則與
+ * 規則層重複（規則層有格式驗證、模型沒有）。B 在 08-14 用真實流量實測，
+ * 這些雜訊型別造成的不是隱私問題而是**功能損害**——一個反引號被遮成
+ * 佔位符送出去，agent 的 system prompt 被挖洞。
+ *
+ * 因此系統只「採信」其中 4 種，見 `NER_ALLOW_TYPES`。這裡仍列出全部 14 種，
+ * 是為了讓讀的人知道「還有這些東西可能跑出來」——把清單藏起來正是
+ * 全組沿用「只有 4 種」這個錯誤說法 11 天的原因。
+ *
+ * ⚠️ 仍未列進 `docs/interface.md` 的類別代碼表（issue #30 追蹤中）。
+ * 補上後這裡應以文件為準。
  */
-export type ModelPiiType = 'NAME' | 'ADDRESS' | 'POSITION' | 'COMPANY';
+export type ModelPiiType =
+  // 系統採信的（見 NER_ALLOW_TYPES）
+  | 'NAME'
+  | 'ADDRESS'
+  | 'POSITION'
+  | 'COMPANY'
+  // 模型會產出但不採信的雜訊型別
+  | 'ORGANIZATION'
+  | 'GOVERNMENT'
+  | 'EMAIL'
+  | 'MOBILE'
+  | 'QQ'
+  | 'VX'
+  | 'BOOK'
+  | 'GAME'
+  | 'MOVIE'
+  | 'SCENE';
+
+/**
+ * 語意層採信的型別白名單——**不在這裡面的 span 當作沒偵測到**。
+ *
+ * 對應 proxy 的 `config.NER_ALLOW_TYPES`（PR #28），預設值必須一致。
+ *
+ * ## 與「偵測到但不遮蔽」是兩個不同機制，不要混用
+ *
+ * | | 白名單（本常數） | 預設不勾選（面板的 UI 決定） |
+ * |---|---|---|
+ * | 意思 | 根本不可信，當作沒偵測到 | 偵測對，但預設不遮 |
+ * | 進 Layer 3 組合風險分數 | ❌ 不進 | ✅ 會進 |
+ * | 算進「偵測到 N 項」 | ❌ 不算 | ✅ 會算 |
+ *
+ * `COMPANY` 正是需要區分兩者的例子：它**留在白名單內**（要計入組合風險，
+ * 權重 0.15，排除掉會漏報），但在面板上可以是「預設不勾選」。
+ */
+export const NER_ALLOW_TYPES: ReadonlySet<string> = new Set([
+  'NAME',
+  'ADDRESS',
+  'POSITION',
+  'COMPANY',
+]);
 
 /**
  * 類別代碼。
