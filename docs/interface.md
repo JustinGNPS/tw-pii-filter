@@ -281,6 +281,38 @@ Layer 1（規則層）與 Layer 2（語意層）抓的是「明確的個資」�
 | `contributing_types` | array\<string\> | 造成風險的準識別子類別，依字母排序、去重 |
 | `risk_level` | string | 風險等級：`"高"` / `"中"` / `"低"` |
 | `suggestions` | array\<string\> | 對應每個 `contributing_types` 的泛化建議（把精確值換成範圍） |
+| `population_estimate` | object（選填） | 年齡／性別／縣市至少兩個維度可解析時，回傳官方人口交叉統計的上限估計；否則省略 |
+
+### `population_estimate` 欄位（Layer 3 v2）
+
+此欄位目前僅由 Python 載體提供，TypeScript 擴充與靜態網站尚未載入人口快照。
+共同 parity 測試仍嚴格比對 spans 與 Layer 3 v1 的全部欄位，只排除這個具名選填欄位；
+人口估算由 `tests/test_population_estimator.py` 另行驗證。
+出生年測試以 `today` 注入固定日期；快照固定使用 2026-10-08，避免跨年失敗。
+
+```json
+{
+  "population_upper_bound": 15689,
+  "dimensions": {"age": 35, "gender": "female", "region": "臺北市"},
+  "covered_types": ["ADDRESS", "AGE", "GENDER"],
+  "uncovered_types": ["POSITION"],
+  "method": "official_joint_population_upper_bound",
+  "data_period": "2026-07",
+  "source_dataset_id": "14226",
+  "generalizations": [
+    {
+      "dimension": "age",
+      "from": 35,
+      "to": {"min": 35, "max": 39},
+      "population_upper_bound": 81826
+    }
+  ]
+}
+```
+
+`population_upper_bound` 不是正式的 k-anonymity 保證。它只代表內政部快照中符合
+已涵蓋維度的登記人口數；`uncovered_types`（例如職稱）與縣市以下的地址仍可能縮小
+實際群組。此欄位不改寫原有 `score`，快照無法使用時也會回退到既有權重評分。
 
 ### 選填、可為 `null`
 

@@ -130,6 +130,41 @@ def test_帶回耗時與快取數字(on):
     assert "hit_rate" in data["cache"]
 
 
+def test_同時回傳原文與遮蔽後的組合風險(on, monkeypatch):
+    text = "35歲女性住在台北市。"
+    start = text.index("台北市")
+    address = {
+        "start": start,
+        "end": start + len("台北市"),
+        "type": "ADDRESS",
+        "text": "台北市",
+        "confidence": 0.99,
+        "source": "model",
+        "replacement": "[ADDRESS_1]",
+    }
+    monkeypatch.setattr(
+        demo.detector,
+        "detect",
+        lambda _text, cache=None: {"text": _text, "spans": [address]},
+    )
+
+    data = on.post("/demo/scan", json={"text": text}).json()
+
+    assert data["original_risk"]["contributing_types"] == ["ADDRESS", "AGE", "GENDER"]
+    assert data["original_risk"]["population_estimate"]["dimensions"]["region"] == "臺北市"
+    assert data["risk"]["contributing_types"] == ["AGE", "GENDER"]
+    assert "ADDRESS" not in data["risk"]["contributing_types"]
+
+
+def test_demo頁面包含人口估算與風險比較介面(on):
+    page = on.get("/demo").text
+
+    assert 'id="originalRiskStage"' in page
+    assert 'id="residualRiskStage"' in page
+    assert 'id="populationEstimate"' in page
+    assert "population_upper_bound" in page
+
+
 # ---------------------------------------------------------------- 隔離
 
 

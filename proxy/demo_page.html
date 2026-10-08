@@ -125,6 +125,15 @@
   .risk.warn .score { color: var(--clay); }
   .risk .lv { font-size: .85rem; color: var(--muted); }
   .sugg { margin: 0; padding-left: 1.1rem; font-size: .88rem; color: var(--muted); display: flex; flex-direction: column; gap: .2rem; }
+  .risk-compare { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .risk-stage { background: var(--surface); padding: .9rem 1rem; display: flex; flex-direction: column; gap: .7rem; min-width: 0; }
+  .risk-stage h3 { margin: 0; font-size: .82rem; color: var(--muted); }
+  .population { border: 1px solid var(--seal); background: var(--seal-soft); border-radius: 8px; padding: 1rem; display: flex; flex-direction: column; gap: .75rem; }
+  .population-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: .4rem 1rem; }
+  .population-count { font-family: var(--mono); color: var(--seal); font-size: 1.8rem; font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums; }
+  .population-label { font-size: .88rem; font-weight: 600; }
+  .population-meta { color: var(--muted); font-size: .8rem; }
+  @media (max-width: 46rem) { .risk-compare { grid-template-columns: 1fr; } }
 
   details { border: 1px solid var(--line); border-radius: 6px; background: var(--surface); }
   summary { cursor: pointer; padding: .6rem .9rem; font-size: .88rem; font-weight: 600; }
@@ -218,9 +227,35 @@
     </section>
 
     <section class="card" id="riskCard" hidden>
-      <h2>組合風險 <span class="hint">遮蔽後仍可能指認到人的殘餘風險 · 只提示，不遮蔽</span></h2>
-      <div class="risk" id="riskBox"></div>
-      <ul class="sugg" id="riskSugg"></ul>
+      <h2>組合風險 <span class="hint">比較原文與遮蔽後結果 · 只提示，不遮蔽</span></h2>
+      <div class="risk-compare">
+        <div class="risk-stage" id="originalRiskStage">
+          <h3>原文風險 <span class="hint">防護前含有的準識別子</span></h3>
+          <div class="risk" id="originalRiskBox"></div>
+          <ul class="sugg" id="originalRiskSugg"></ul>
+        </div>
+        <div class="risk-stage" id="residualRiskStage">
+          <h3>遮蔽後殘餘風險 <span class="hint">雲端 AI 實際看得到的資訊</span></h3>
+          <div class="risk" id="riskBox"></div>
+          <ul class="sugg" id="riskSugg"></ul>
+        </div>
+      </div>
+      <div class="population" id="populationEstimate" hidden>
+        <div class="population-head">
+          <span class="population-count" id="populationCount"></span>
+          <span class="population-label">人以內符合已涵蓋的原文條件</span>
+        </div>
+        <p class="population-meta" id="populationDimensions"></p>
+        <div class="tbl-scroll">
+          <table>
+            <thead><tr><th>泛化方式</th><th>人口上限</th><th>增加</th></tr></thead>
+            <tbody id="populationGeneralizations"></tbody>
+          </table>
+        </div>
+        <p class="population-meta" id="populationCoverage"></p>
+        <p class="population-meta" id="populationSource"></p>
+        <p class="note">這是官方交叉統計的人口上限，不是真正的 k-anonymity 保證；未涵蓋的職稱、公司與更細地址可能讓實際人數更少。</p>
+      </div>
     </section>
 
     <section id="mapCard" hidden>
@@ -590,18 +625,55 @@ async function scan() {
     ? `不遮蔽的型別：${d.skip_types.join('、') || '無'}（偵測得到，但依設定保留原文，仍會計入組合風險）`
     : `語意層未啟用，因此姓名與地址不會被偵測到 —— 目前只有規則層在跑。不遮蔽的型別：${d.skip_types.join('、') || '無'}`;
 
-  const r = d.risk;
-  if (r && r.score > 0) {
-    $('riskCard').hidden = false;
-    const warn = r.score >= 0.6;
-    $('riskBox').className = 'risk' + (warn ? ' warn' : '');
-    $('riskBox').innerHTML =
-      `<span class="score">${r.score.toFixed(2)}</span>` +
-      `<span class="meter"><i style="width:${Math.round(r.score * 100)}%"></i></span>` +
-      `<span class="lv">${esc(r.risk_level)}　準識別子：${r.contributing_types.map(esc).join('、') || '無'}</span>`;
-    $('riskSugg').innerHTML = (r.suggestions || []).map((s) => `<li>${esc(s)}</li>`).join('');
-  } else {
-    $('riskCard').hidden = true;
+  const renderRisk = (riskValue, stageId, boxId, suggestionsId) => {
+    const visible = Boolean(riskValue && riskValue.score > 0);
+    $(stageId).hidden = !visible;
+    if (!visible) return false;
+    const warn = riskValue.score >= 0.6;
+    $(boxId).className = 'risk' + (warn ? ' warn' : '');
+    $(boxId).innerHTML =
+      `<span class="score">${riskValue.score.toFixed(2)}</span>` +
+      `<span class="meter"><i style="width:${Math.round(riskValue.score * 100)}%"></i></span>` +
+      `<span class="lv">${esc(riskValue.risk_level)}　準識別子：${riskValue.contributing_types.map(esc).join('、') || '無'}</span>`;
+    $(suggestionsId).innerHTML = (riskValue.suggestions || []).map((s) => `<li>${esc(s)}</li>`).join('');
+    return true;
+  };
+
+  const originalVisible = renderRisk(d.original_risk, 'originalRiskStage', 'originalRiskBox', 'originalRiskSugg');
+  const residualVisible = renderRisk(d.risk, 'residualRiskStage', 'riskBox', 'riskSugg');
+  $('riskCard').hidden = !(originalVisible || residualVisible);
+
+  const estimate = d.original_risk && d.original_risk.population_estimate;
+  $('populationEstimate').hidden = !estimate;
+  if (estimate) {
+    const genderLabel = {male: '男性', female: '女性'};
+    const dims = estimate.dimensions;
+    const dimensionParts = [
+      dims.age == null ? null : `年齡 ${dims.age} 歲`,
+      dims.gender == null ? null : `性別 ${genderLabel[dims.gender] || dims.gender}`,
+      dims.region == null ? null : `地區 ${dims.region}`
+    ].filter(Boolean);
+    $('populationCount').textContent = Number(estimate.population_upper_bound).toLocaleString('zh-TW');
+    $('populationDimensions').textContent = `已涵蓋條件：${dimensionParts.join('、')}`;
+
+    const formatValue = (dimension, value) => {
+      if (dimension === 'age' && value && typeof value === 'object') return `${value.min}–${value.max} 歲`;
+      if (dimension === 'age') return `${value} 歲`;
+      if (dimension === 'gender') return value === 'all' ? '不限性別' : (genderLabel[value] || value);
+      return String(value);
+    };
+    const dimensionLabel = {age: '年齡', region: '地區', gender: '性別'};
+    $('populationGeneralizations').innerHTML = (estimate.generalizations || []).map((item) => {
+      const count = Number(item.population_upper_bound);
+      const increase = count - Number(estimate.population_upper_bound);
+      const change = `${dimensionLabel[item.dimension] || item.dimension}：${formatValue(item.dimension, item.from)} → ${formatValue(item.dimension, item.to)}`;
+      return `<tr><td>${esc(change)}</td><td class="mono">${count.toLocaleString('zh-TW')}</td><td class="mono">+${increase.toLocaleString('zh-TW')}</td></tr>`;
+    }).join('');
+    const uncovered = estimate.uncovered_types || [];
+    $('populationCoverage').textContent = uncovered.length
+      ? `未涵蓋條件：${uncovered.join('、')}（沒有用不可靠的獨立比例相乘）`
+      : '這次的準識別子皆有官方交叉統計可直接支持。';
+    $('populationSource').textContent = `資料：內政部統計處 ${estimate.data_period}｜政府資料集 ${estimate.source_dataset_id}`;
   }
 
   $('mapCard').hidden = d.mapping.length === 0;

@@ -23,15 +23,21 @@ Layer 3：組合風險評分
         "suggestions": ["「35歲」可泛化為「30-35歲」", ...]
     }
 
-v1 設計取捨（layer3_spec.md 明確定義為兩版）：
-    - 簡化版（本模組，第一優先）：共現計數 + 依識別力差異化權重，規則式計分。
-    - 進階版（行有餘力）：用台灣人口統計資料做真正的 k-anonymity 估算，
-      需要背景母體資料庫，目前沒有這種資料可用，留待 v2。
+v2 設計取捨：
+    - 原有的共現計數 + 差異化權重仍是固定 fallback，維持既有介面與行為。
+    - 年齡／性別／縣市中至少兩個維度可解析時，另外附上內政部交叉統計的
+      `population_estimate`。它是母體人數「上限」，不是匿名保證：職稱、公司、
+      較細行政區等未涵蓋條件，都可能讓實際符合人數更少。
 """
 
 import re
 from datetime import date
 from typing import Dict, List, Optional
+
+from core.risk.population_estimator import (
+    estimate_population_upper_bound,
+    extract_county_city,
+)
 
 # ---------------------------------------------------------------------------
 # ⚠️ ORGANIZATION / GOVERNMENT / SCENE 目前是設計預留、非啟用中：
@@ -132,6 +138,15 @@ def _extract_age(text: str, today: Optional[date] = None) -> Optional[int]:
     return None
 
 
+def _extract_exact_age(text: str) -> Optional[int]:
+    """只取文字明說的歲數；出生年會有生日誤差，不用來查單一年齡統計。"""
+    ages = {int(m.group(1)) for m in _AGE_DIGIT_PATTERN.finditer(text)}
+    ages.update(_chinese_number_to_int(m.group(1)) for m in _AGE_CHINESE_PATTERN.finditer(text))
+    ages.discard(None)
+    # 多人或年齡區間不可只取第一個歲數，否則會回報錯誤的單一年齡人口。
+    return ages.pop() if len(ages) == 1 else None
+
+
 def _has_age(text: str) -> bool:
     return (
         _AGE_DIGIT_PATTERN.search(text) is not None
@@ -145,11 +160,27 @@ def _has_age(text: str) -> bool:
 # GENDER：同樣不在 NER 標籤裡，用簡單關鍵字判斷（v1 啟發式，容易有 false
 # positive，例如「小姐姐」這種非性別語境；先求有、之後再精修）。
 # ---------------------------------------------------------------------------
-_GENDER_KEYWORDS = ("男性", "女性", "先生", "小姐", "太太", "女士")
+_GENDER_BY_KEYWORD = {
+    "男性": "male",
+    "先生": "male",
+    "女性": "female",
+    "小姐": "female",
+    "太太": "female",
+    "女士": "female",
+}
+_GENDER_KEYWORDS = tuple(_GENDER_BY_KEYWORD)
 
 
 def _has_gender(text: str) -> bool:
     return any(kw in text for kw in _GENDER_KEYWORDS)
+
+
+def _extract_gender(text: str) -> Optional[str]:
+    """解析唯一性別；同一段同時提到不同性別時不做人口估算。"""
+    found = {gender for keyword, gender in _GENDER_BY_KEYWORD.items() if keyword in text}
+    if len(found) == 1:
+        return found.pop()
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -236,6 +267,7 @@ def compute_combination_risk(text: str, spans: Optional[List[Dict]] = None, toda
             "contributing_types": [str], # 依字母排序、去重
             "risk_level": str,           # "高" / "中" / "低"
             "suggestions": [str],        # 每個貢獻型別對應的泛化建議
+            "population_estimate": {..}, # 選填；官方人口交叉統計的上限估計
         }
     """
     contributing_types = set()
@@ -259,12 +291,29 @@ def compute_combination_risk(text: str, spans: Optional[List[Dict]] = None, toda
 
     contributing_sorted = sorted(contributing_types)
 
-    return {
+    result = {
         "score": round(score, 3),
         "contributing_types": contributing_sorted,
         "risk_level": _risk_level(score),
         "suggestions": _build_suggestions(text, contributing_sorted, today) if score > 0 else [],
     }
+
+    if score > 0:
+        try:
+            population_estimate = estimate_population_upper_bound(
+                age=_extract_exact_age(text),
+                gender=_extract_gender(text),
+                region=extract_county_city(spans),
+                contributing_types=contributing_sorted,
+            )
+        except (OSError, ValueError, KeyError, IndexError, TypeError):
+            # 人口快照是可選的加值資料；遺失或損毀時仍回傳既有權重評分，
+            # 避免 Layer 3 v2 讓核心 PII 偵測整體失效。
+            population_estimate = None
+        if population_estimate is not None:
+            result["population_estimate"] = population_estimate
+
+    return result
 
 
 if __name__ == "__main__":
