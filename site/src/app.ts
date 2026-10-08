@@ -166,7 +166,7 @@ function renderRisk(risk: CombinationRisk | null): void {
 //
 // 所以把「被擋下來的候選」也列出來並說明理由。這反而是最有說服力的一段：
 // 其他工具不驗檢核碼，任何「1 英文 + 9 數字」都會被當成身分證；我們會驗，
-// 所以不誤報——代價就是你得用真的通得過檢核碼的號碼才看得到效果。
+// 所以能排除這類誤報——代價就是你得用真的通得過檢核碼的號碼才看得到效果。
 // ────────────────────────────────────────────────────────────
 interface Reject {
   cand: string;
@@ -287,7 +287,7 @@ function renderRejects(items: Reject[], detectedCount: number): void {
     // 只有真的擋下候選時才講這一段；單純的語意層提示不需要它。
     (rejected
       ? '<p class="fine">其他工具不驗檢核碼，任何「1 英文字母 + 9 位數字」都會被當成身分證。' +
-        '我們會驗，所以不誤報；想看到效果得用通得過檢核碼的號碼，上面的範例都是。</p>'
+        '我們會驗，所以能排除格式像但不合法的號碼；想看到效果得用通得過檢核碼的公開測試值，上面的範例都是。</p>'
       : '');
   box.hidden = false;
 }
@@ -469,13 +469,17 @@ async function runExtensionFlow(): Promise<void> {
 
   const { spans, combination_risk } = detectAll(text);
 
-  // 沒偵測到東西就完全不打擾使用者 —— 這是擴充能被長期留著的前提。
-  if (spans.length === 0) {
+  const risk = combination_risk ?? null;
+
+  // 沒偵測到東西、也沒有組合風險，就完全不打擾使用者 —— 這是擴充能被長期留著的前提。
+  // 條件刻意包含組合風險，與 content/index.ts 一致：只有準識別子的文字一個 span
+  // 都抓不到，若只看 spans 就放行，等於告訴使用者「沒問題」。
+  if (spans.length === 0 && !risk) {
     showExtResult(
       'cancel',
       '面板沒有跳出來',
       null,
-      '這段文字沒有偵測到任何個資，擴充直接把原文貼上、不打擾你。' +
+      '這段文字沒有偵測到任何個資，也沒有組合風險，擴充直接把原文貼上、不打擾你。' +
         '<b>不該跳的時候不跳</b>，跟該跳的時候要跳一樣重要。',
     );
     return;
@@ -488,7 +492,7 @@ async function runExtensionFlow(): Promise<void> {
   btnExt.disabled = true;
   let decision;
   try {
-    decision = await showPanel(spans, previewPlaceholders, combination_risk ?? null);
+    decision = await showPanel(spans, previewPlaceholders, risk);
   } finally {
     btnExt.disabled = false;
   }
@@ -523,9 +527,13 @@ async function runExtensionFlow(): Promise<void> {
   const skipped = spans.length - decision.spans.length;
   showExtResult(
     'good',
-    `已遮蔽 ${mapping.length} 筆後貼進輸入框`,
+    mapping.length > 0
+      ? `已遮蔽 ${mapping.length} 筆後貼進輸入框`
+      : '沒有需要遮蔽的項目，原文貼進輸入框',
     maskedText,
-    `這就是雲端 AI 會看到的內容。對照表（${mapping.length} 筆）只存在你的瀏覽器裡，絕不外傳。` +
+    (mapping.length > 0
+      ? `這就是雲端 AI 會看到的內容。對照表（${mapping.length} 筆）只存在你的瀏覽器裡，絕不外傳。`
+      : '面板只提示了組合風險；要不要先改寫再送出，由你決定。') +
       (skipped > 0
         ? ` <b>你取消勾選了 ${skipped} 項</b>，那些維持原文送出。`
         : ''),
