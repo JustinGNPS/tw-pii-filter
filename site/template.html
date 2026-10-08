@@ -162,6 +162,32 @@ ul.tight li{margin:5px 0; font-size:14.5px}
 .ba{display:grid; grid-template-columns:1fr 1fr; gap:14px; margin:12px 0}
 @media (max-width:760px){.ba{grid-template-columns:1fr}}
 
+/* ── 「為什麼沒抓到」說明區 ── */
+#rejects{
+  margin:0 0 16px; padding:13px 16px; border-radius:9px;
+  background:var(--code); border:1px solid var(--line); font-size:13.5px;
+}
+#rejects h5{margin:0 0 8px; font-size:14px; color:var(--ink)}
+#rejects ul{margin:0; padding-left:0; list-style:none}
+#rejects li{
+  margin:7px 0; padding-left:22px; position:relative; line-height:1.65;
+}
+#rejects li::before{
+  content:"✕"; position:absolute; left:3px; top:0;
+  color:var(--high); font-weight:700;
+}
+#rejects li.info::before{content:"ℹ"; color:var(--accent)}
+#rejects .cand{
+  font-family:ui-monospace,Consolas,monospace; font-weight:600;
+  background:var(--high-bg); color:var(--high); padding:1px 6px; border-radius:4px;
+}
+#rejects li.info .cand{background:var(--accent-soft); color:var(--accent)}
+#rejects .why{color:var(--muted)}
+#rejects .punch{
+  margin:10px 0 0; padding-top:10px; border-top:1px dashed var(--line);
+  color:var(--muted); font-size:12.5px;
+}
+
 .usecase{display:grid; grid-template-columns:repeat(auto-fit,minmax(230px,1fr)); gap:14px; margin:16px 0}
 .usecase .card .body{min-height:0; white-space:normal; font-family:inherit; font-size:13.5px}
 .usecase b.who{display:block; color:var(--accent); font-size:14.5px; margin-bottom:5px}
@@ -235,6 +261,8 @@ footer a{color:var(--accent)}
       <span class="stat"><b id="s-types">0</b><span>種類別</span></span>
       <span class="stat"><b id="s-time">0</b><span>ms 偵測耗時</span></span>
     </div>
+
+    <div id="rejects" hidden></div>
 
     <div class="cols">
       <div class="card">

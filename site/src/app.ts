@@ -24,7 +24,13 @@
  * 不假裝這裡展示的是完整系統。
  */
 
-import { detectAll, type Span } from '../../extension/src/core';
+import {
+  detectAll,
+  isValidTwId,
+  isValidTwPhoneM,
+  isValidTwTax,
+  type Span,
+} from '../../extension/src/core';
 import { maskText, riskLevel, typeLabel } from '../../extension/src/masking';
 import { PlaceholderAllocator } from '../../extension/src/placeholder';
 
@@ -123,6 +129,137 @@ function highlightTokens(masked: string): string {
   );
 }
 
+// ────────────────────────────────────────────────────────────
+// 「為什麼沒抓到」
+//
+// 實測使用者會隨手打一組假號碼（例如 A121313），看到「0 筆」就以為壞了。
+// 系統其實是對的——那個號碼只有 7 碼，根本不是身分證格式。但**沉默的正確
+// 比錯誤更傷**：看的人不會知道是自己的號碼不合法。
+//
+// 所以把「被擋下來的候選」也列出來並說明理由。這反而是最有說服力的一段：
+// 其他工具不驗檢核碼，任何「1 英文 + 9 數字」都會被當成身分證；我們會驗，
+// 所以不誤報——代價就是你得用真的通得過檢核碼的號碼才看得到效果。
+// ────────────────────────────────────────────────────────────
+interface Reject {
+  cand: string;
+  why: string;
+  kind: 'reject' | 'info';
+}
+
+/**
+ * 刻意不用 lookbehind（`(?<!...)`）。那個語法在舊版 Safari 會在**解析階段**
+ * 就丟 SyntaxError，整包 bundle 直接不執行——為了一個說明用的小功能
+ * 讓整頁在某些瀏覽器白畫面，完全不划算。改成把前置字元納入比對再取 group。
+ */
+function explainMisses(text: string, spans: Span[]): Reject[] {
+  const out: Reject[] = [];
+  const seen = new Set<string>();
+
+  /**
+   * 候選是否落在某個「已經偵測到」的 span 裡面。
+   *
+   * 必須比對**座標**而不是字串內容：市話 `02-27208889` 的後 8 碼單獨看
+   * 正好是統編的長度，若只比字串相等，就會把一個已經被遮蔽的號碼
+   * 再列成「被擋下來的統編候選」——那是錯的，而且剛好出現在自己的範例裡。
+   */
+  const insideDetected = (start: number, end: number): boolean =>
+    spans.some((span) => start < span.end && end > span.start);
+
+  const push = (
+    cand: string,
+    why: string,
+    kind: Reject['kind'] = 'reject',
+  ): void => {
+    if (seen.has(kind + cand)) return;
+    seen.add(kind + cand);
+    out.push({ cand, why, kind });
+  };
+
+  const scan = (re: RegExp, handle: (value: string) => void): void => {
+    for (const match of text.matchAll(re)) {
+      const value = match[2];
+      if (!value || match.index === undefined) continue;
+      const start = match.index + match[1].length;
+      if (insideDetected(start, start + value.length)) continue;
+      handle(value);
+    }
+  };
+
+  // 長度對、但檢核碼不過的身分證
+  scan(/(^|[^A-Za-z0-9])([A-Za-z][0-9]{9})(?![0-9])/g, (value) => {
+    if (!isValidTwId(value)) {
+      push(value, '格式像身分證（1 英文字母 + 9 位數字），但<b>檢核碼驗證不通過</b>');
+    }
+  });
+
+  // 英文字母開頭、數字位數不足
+  scan(/(^|[^A-Za-z0-9])([A-Za-z][0-9]{3,8})(?![0-9])/g, (value) => {
+    push(
+      value,
+      `長度不符：身分證是 1 個英文字母 + <b>9</b> 位數字，這個只有 ${value.length - 1} 位`,
+    );
+  });
+
+  // 8 碼數字、但統編檢核碼不過
+  scan(/(^|[^0-9])([0-9]{8})(?![0-9])/g, (value) => {
+    if (!isValidTwTax(value)) {
+      push(value, '符合統一編號的 8 碼長度，但<b>檢核碼驗證不通過</b>');
+    }
+  });
+
+  // 09 開頭、但長度不符
+  scan(/(^|[^0-9])(09[0-9]{4,12})(?![0-9])/g, (value) => {
+    if (!isValidTwPhoneM(value)) {
+      push(
+        value,
+        `09 開頭但長度不符：手機是 09 加 8 位數字（共 <b>10</b> 碼），這個有 ${value.length} 碼`,
+      );
+    }
+  });
+
+  // 有中文、但這頁沒有語意層
+  if (/[一-鿿]/.test(text) && !spans.some((s) => s.source === 'model')) {
+    push(
+      '人名 / 地址 / 公司名',
+      '要靠<b>語意層（L2）的 NER 模型</b>才認得出來，這個網頁只跑規則層。' +
+        '完整版有做，見下方「完整系統還能做什麼」的第 ② 個分頁',
+      'info',
+    );
+  }
+
+  return out;
+}
+
+function renderRejects(items: Reject[], detectedCount: number): void {
+  const box = document.getElementById('rejects');
+  if (!box) return;
+  if (items.length === 0) {
+    box.hidden = true;
+    return;
+  }
+  const title =
+    detectedCount === 0
+      ? '這段文字沒有偵測到個資 —— 原因在這裡'
+      : '另外有幾個「看起來像、但被擋下來」的字串';
+
+  box.innerHTML =
+    `<h5>${title}</h5><ul>` +
+    items
+      .map(
+        (item) =>
+          `<li class="${item.kind === 'info' ? 'info' : ''}">` +
+          `<span class="cand">${escapeHtml(item.cand)}</span> ` +
+          `<span class="why">${item.why}</span></li>`,
+      )
+      .join('') +
+    '</ul><p class="punch"><b>這正是本作品與其他工具的差別。</b>' +
+    'Presidio、GLiNER、LLM Guard 都<b>沒有驗證檢核碼</b> —— ' +
+    '任何「1 英文字母 + 9 位數字」的字串都會被它們當成身分證，造成大量誤報。' +
+    '我們會驗，所以不誤報；代價是<b>你得用真的通得過檢核碼的號碼</b>才看得到效果' +
+    '（上面三個範例都是，可以直接點來看）。</p>';
+  box.hidden = false;
+}
+
 /** 依目前的對照表組一段「像那麼回事」的 AI 回覆，讓使用者不必自己想。 */
 function buildFakeReply(): string {
   const tokens = [...mapping.keys()];
@@ -150,6 +287,7 @@ function run(): void {
     outRestored.innerHTML = '<span style="color:var(--muted)">（還沒有還原）</span>';
     detailTable.hidden = true;
     detailEmpty.hidden = false;
+    renderRejects([], 0);
     reply.value = '';
     mapping = new Map();
     $('s-count').textContent = '0';
@@ -171,6 +309,7 @@ function run(): void {
 
   outOrig.innerHTML = highlight(text, spans);
   outMasked.innerHTML = highlightTokens(result.maskedText);
+  renderRejects(explainMisses(text, spans), result.mapping.length);
 
   $('s-count').textContent = String(result.mapping.length);
   $('s-types').textContent = String(new Set(spans.map((s) => s.type)).size);
