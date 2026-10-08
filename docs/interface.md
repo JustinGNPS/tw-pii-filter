@@ -285,6 +285,11 @@ Layer 1（規則層）與 Layer 2（語意層）抓的是「明確的個資」�
 
 ### `population_estimate` 欄位（Layer 3 v2）
 
+此欄位目前僅由 Python 載體提供，TypeScript 擴充與靜態網站尚未載入人口快照。
+共同 parity 測試仍嚴格比對 spans 與 Layer 3 v1 的全部欄位，只排除這個具名選填欄位；
+人口估算由 `tests/test_population_estimator.py` 另行驗證。
+出生年測試以 `today` 注入固定日期；快照固定使用 2026-10-08，避免跨年失敗。
+
 ```json
 {
   "population_upper_bound": 15689,
