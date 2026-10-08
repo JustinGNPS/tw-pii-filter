@@ -48,7 +48,7 @@ _DETECTORS = (
 )
 
 
-def detect_all(text: str, extra_spans: list = None) -> dict:
+def detect_all(text: str, extra_spans: list = None, *, today=None) -> dict:
     """依序執行 core/rules 底下所有規則（source="rule"），並可透過 extra_spans
     帶入語意層（如 D 的 NER model，source="model"）已產生的 spans 一併整合。
     所有 spans 合併後經 Layer 4（見 core.rules.conflict_resolver）解析重疊
@@ -84,7 +84,7 @@ def detect_all(text: str, extra_spans: list = None) -> dict:
 
     # Layer 3 的 AGE 正則同樣是 [0-9]，用正規化後的文字才抓得到全形年齡
     # （例如「３５歲」）。不這麼做會與 TypeScript 版產生分歧。
-    risk = compute_combination_risk(normalized, spans)
+    risk = compute_combination_risk(normalized, spans, today=today)
     combination_risk = risk if risk["score"] > 0 else None
 
     return {"text": text, "spans": spans, "combination_risk": combination_risk}

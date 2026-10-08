@@ -810,5 +810,37 @@
         "若非必要，建議省略性別資訊"
       ]
     }
+  },
+  {
+    "text": "民國78年次男性",
+    "spans": [],
+    "combination_risk": {
+      "score": 0.5,
+      "contributing_types": [
+        "AGE",
+        "GENDER"
+      ],
+      "risk_level": "中",
+      "suggestions": [
+        "「37歲」建議泛化為「35-39歲」",
+        "若非必要，建議省略性別資訊"
+      ]
+    }
+  },
+  {
+    "text": "1989年生男性",
+    "spans": [],
+    "combination_risk": {
+      "score": 0.5,
+      "contributing_types": [
+        "AGE",
+        "GENDER"
+      ],
+      "risk_level": "中",
+      "suggestions": [
+        "「37歲」建議泛化為「35-39歲」",
+        "若非必要，建議省略性別資訊"
+      ]
+    }
   }
 ]

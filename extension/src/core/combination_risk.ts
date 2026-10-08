@@ -200,6 +200,6 @@ export function computeCombinationRisk(
     score: Math.round(score * 1000) / 1000,
     contributing_types: sorted,
     risk_level: toRiskLevel(score),
-    suggestions: buildSuggestions(text, sorted, today),
+    suggestions: score > 0 ? buildSuggestions(text, sorted, today) : [],
   };
 }

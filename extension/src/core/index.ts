@@ -78,7 +78,7 @@ const DETECTORS: Detector[] = [
  * @param text       待偵測的原始文字
  * @param extraSpans 語意層（或其他外部來源）已產生、符合介面格式的 spans
  */
-export function detectAll(text: string, extraSpans?: Span[] | null): DetectionResult {
+export function detectAll(text: string, extraSpans?: Span[] | null, today?: Date): DetectionResult {
   // 全形英數在中文輸入環境很常見（注音全形模式、從 Word/PDF 複製），
   // 但規則層的正則是 [0-9]/[A-Za-z]，對不到全形。偵測前先正規化，
   // 否則使用者貼含全形統編的合約會顯示「未偵測到敏感資訊」（issue #21）。
@@ -116,7 +116,7 @@ export function detectAll(text: string, extraSpans?: Span[] | null): DetectionRe
   // 依契約，score 為 0（準識別子共現數 < 2）時整個欄位為 null，
   // 而不是回傳 score: 0 的空殼物件——下游只要檢查是否為 null 即可。
   // 用正規化後的文字算 Layer 3：AGE 正則同樣是 [0-9]，全形年齡才抓得到
-  const risk = computeCombinationRisk(scanText, spans);
+  const risk = computeCombinationRisk(scanText, spans, today);
   const combination_risk = risk.score > 0 ? risk : null;
 
   return { text, spans, combination_risk };
