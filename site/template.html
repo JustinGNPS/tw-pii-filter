@@ -25,235 +25,294 @@
   }
 }
 *{box-sizing:border-box}
+html{scroll-behavior:smooth; scroll-padding-top:64px}
 body{
   margin:0; background:var(--bg); color:var(--ink);
   font-family:"Noto Sans TC","PingFang TC","Microsoft JhengHei",system-ui,-apple-system,sans-serif;
-  line-height:1.7; -webkit-font-smoothing:antialiased;
+  font-size:15px; line-height:1.7; -webkit-font-smoothing:antialiased;
 }
-.wrap{max-width:1080px; margin:0 auto; padding:0 20px}
-code,kbd,pre,.mono{font-family:ui-monospace,"Cascadia Code","Consolas","Noto Sans Mono",monospace}
+.wrap{max-width:1040px; margin:0 auto; padding:0 20px}
+code,pre,.mono{font-family:ui-monospace,"Cascadia Code",Consolas,"Noto Sans Mono",monospace}
+code{background:var(--code); padding:1px 5px; border-radius:4px; font-size:.92em}
+a{color:var(--accent)}
 
-/* ── header ── */
-header{padding:56px 0 40px; border-bottom:1px solid var(--line); background:var(--panel)}
-h1{margin:0 0 10px; font-size:clamp(26px,4vw,38px); letter-spacing:-.02em; line-height:1.3}
-.tagline{margin:0 0 22px; font-size:clamp(15px,2vw,19px); color:var(--muted)}
-.links{display:flex; gap:10px; flex-wrap:wrap}
-.links a{
-  display:inline-block; padding:7px 15px; border-radius:7px; text-decoration:none;
-  font-size:14px; border:1px solid var(--line); color:var(--ink); background:var(--bg);
+/* ── 導覽列 ── */
+nav{
+  position:sticky; top:0; z-index:10; border-bottom:1px solid var(--line);
+  background:color-mix(in srgb,var(--panel) 88%,transparent); backdrop-filter:blur(8px);
 }
-.links a.primary{background:var(--accent); border-color:var(--accent); color:#fff}
-.links a:hover{border-color:var(--accent)}
+nav .wrap{display:flex; align-items:center; gap:22px; height:52px}
+nav .brand{font-weight:700; font-size:15px; margin-right:auto; white-space:nowrap}
+nav a{font-size:14px; color:var(--muted); text-decoration:none; white-space:nowrap}
+nav a:hover{color:var(--accent)}
+@media (max-width:640px){nav a.opt{display:none}}
 
-/* ── sections ── */
-section{padding:44px 0; border-bottom:1px solid var(--line)}
-h2{margin:0 0 6px; font-size:23px; letter-spacing:-.01em}
-h3{margin:28px 0 10px; font-size:16px}
-.sub{margin:0 0 24px; color:var(--muted); font-size:15px}
+/* ── 開頭 ── */
+header{padding:44px 0 8px}
+h1{margin:0 0 8px; font-size:clamp(26px,4vw,36px); letter-spacing:-.02em; line-height:1.3}
+.tagline{margin:0; font-size:clamp(15px,2vw,18px); color:var(--muted)}
 
-.notice{
-  margin:0 0 24px; padding:13px 16px; border-radius:8px; font-size:14px;
-  background:var(--accent-soft); border:1px solid color-mix(in srgb,var(--accent) 30%,transparent);
-}
-.notice strong{color:var(--accent)}
+/* ── 區塊 ── */
+section{padding:40px 0}
+section + section{border-top:1px solid var(--line)}
+h2{margin:0 0 6px; font-size:22px; letter-spacing:-.01em}
+h3{margin:0 0 10px; font-size:16px}
+.sub{margin:0 0 22px; color:var(--muted)}
+.fine{font-size:13px; color:var(--muted); margin:10px 0 0}
 
-/* ── demo ── */
-.chips{display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px}
+/* ── 共用元件 ── */
+.card{background:var(--panel); border:1px solid var(--line); border-radius:10px}
+.cols{display:grid; grid-template-columns:1fr 1fr; gap:14px}
+@media (max-width:760px){.cols{grid-template-columns:1fr}}
+
+.chips{display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:18px}
+.chips .label{font-size:13px; color:var(--muted)}
 .chip{
-  padding:6px 13px; border-radius:999px; border:1px solid var(--line);
+  padding:5px 13px; border-radius:999px; border:1px solid var(--line);
   background:var(--panel); color:var(--ink); font-size:13px; cursor:pointer; font-family:inherit;
 }
 .chip:hover{border-color:var(--accent); color:var(--accent)}
-textarea{
-  width:100%; min-height:150px; padding:14px; border-radius:9px; resize:vertical;
-  border:1px solid var(--line); background:var(--panel); color:var(--ink);
-  font-size:14px; line-height:1.75; font-family:ui-monospace,"Consolas",monospace;
-}
-textarea:focus{outline:2px solid var(--accent); outline-offset:-1px; border-color:transparent}
-
-.stats{display:flex; gap:22px; flex-wrap:wrap; margin:16px 0; font-size:14px}
-.stat b{font-size:21px; font-variant-numeric:tabular-nums; color:var(--accent); margin-right:5px}
-.stat span{color:var(--muted)}
-
-.cols{display:grid; grid-template-columns:1fr 1fr; gap:16px}
-@media (max-width:760px){.cols{grid-template-columns:1fr}}
-.card{background:var(--panel); border:1px solid var(--line); border-radius:9px; overflow:hidden}
-.card>h4{
-  margin:0; padding:10px 14px; font-size:13px; font-weight:600;
-  border-bottom:1px solid var(--line); color:var(--muted);
-}
-.card .body{
-  padding:14px; font-size:13.5px; line-height:1.8; white-space:pre-wrap; word-break:break-word;
-  font-family:ui-monospace,"Consolas",monospace; min-height:120px; max-height:340px; overflow:auto;
-}
-mark{padding:1px 3px; border-radius:4px; font-weight:600; background:var(--high-bg); color:var(--high)}
-mark.r-medium{background:var(--mid-bg); color:var(--mid)}
-mark.r-low{background:var(--low-bg); color:var(--low)}
-.tok{
-  padding:1px 5px; border-radius:4px; font-weight:600;
-  background:var(--accent-soft); color:var(--accent);
-}
-
-table{width:100%; border-collapse:collapse; font-size:13.5px; margin-top:8px}
-th,td{padding:8px 11px; text-align:left; border-bottom:1px solid var(--line); vertical-align:top}
-th{color:var(--muted); font-weight:600; font-size:12.5px; white-space:nowrap}
-td.mono{font-family:ui-monospace,"Consolas",monospace; word-break:break-all}
-.tablewrap{overflow-x:auto; background:var(--panel); border:1px solid var(--line); border-radius:9px; padding:4px 10px 10px}
-.pill{display:inline-block; padding:1px 8px; border-radius:999px; font-size:11.5px; font-weight:600}
-.pill.high{background:var(--high-bg); color:var(--high)}
-.pill.medium{background:var(--mid-bg); color:var(--mid)}
-.pill.low{background:var(--low-bg); color:var(--low)}
-.empty{color:var(--muted); font-size:14px; padding:18px 0}
+.chip.ghost{background:none; color:var(--muted)}
+.local{margin-left:auto; font-size:13px; color:var(--low); font-weight:600}
+@media (max-width:760px){.local{margin-left:0; width:100%}}
 
 button.go{
-  padding:9px 18px; border-radius:8px; border:none; cursor:pointer;
+  padding:8px 16px; border-radius:8px; border:none; cursor:pointer;
   background:var(--accent); color:#fff; font-size:14px; font-family:inherit; font-weight:600;
 }
 button.go:hover{filter:brightness(1.08)}
+button.go:disabled{opacity:.6; cursor:default}
 
-.flow{
-  display:grid; grid-template-columns:repeat(4,1fr); gap:10px; margin:22px 0 6px; font-size:13px;
+.tok{padding:1px 5px; border-radius:4px; font-weight:600; background:var(--accent-soft); color:var(--accent)}
+mark{padding:1px 3px; border-radius:4px; font-weight:600; background:var(--high-bg); color:var(--high)}
+mark.r-low{background:var(--low-bg); color:var(--low)}
+.pill{display:inline-block; padding:1px 9px; border-radius:999px; font-size:12px; font-weight:600; white-space:nowrap}
+.pill.high{background:var(--high-bg); color:var(--high)}
+.pill.medium{background:var(--mid-bg); color:var(--mid)}
+.pill.low{background:var(--low-bg); color:var(--low)}
+.ok{color:var(--low); font-weight:700}
+.no{color:var(--high); font-weight:700}
+
+table{width:100%; border-collapse:collapse; font-size:13.5px}
+th,td{padding:8px 11px; text-align:left; border-bottom:1px solid var(--line); vertical-align:top}
+tr:last-child td{border-bottom:none}
+th{color:var(--muted); font-weight:600; font-size:12.5px; white-space:nowrap}
+td.mono{word-break:break-all}
+td small{display:block; color:var(--muted); font-size:12px}
+.tablewrap{overflow-x:auto; padding:2px 6px}
+
+details{margin-top:14px}
+details>summary{cursor:pointer; font-size:14px; color:var(--muted); padding:4px 0}
+details>summary:hover{color:var(--accent)}
+details[open]>summary{margin-bottom:10px}
+
+/* ── 試用區 ── */
+.step{margin-top:22px}
+.step-head{display:flex; align-items:baseline; gap:10px; flex-wrap:wrap; margin-bottom:10px}
+.step-head .num{
+  width:22px; height:22px; border-radius:50%; background:var(--accent); color:#fff;
+  font-size:12.5px; font-weight:700; display:inline-grid; place-items:center; align-self:center;
 }
+.step-head b{font-size:16px}
+.step-head .desc{color:var(--muted); font-size:14px}
+.step-head .meta{margin-left:auto; font-size:13px; color:var(--muted); font-variant-numeric:tabular-nums}
+.step-head .meta b{font-size:14px; color:var(--accent)}
+.pane{display:flex; flex-direction:column; overflow:hidden}
+.pane-title{
+  padding:8px 14px; font-size:12.5px; font-weight:600; color:var(--muted);
+  border-bottom:1px solid var(--line);
+}
+.pane textarea,.pane .out{
+  flex:1; width:100%; margin:0; padding:14px; border:none; background:none; color:var(--ink);
+  font:13.5px/1.8 ui-monospace,"Cascadia Code",Consolas,monospace;
+  white-space:pre-wrap; word-break:break-word; min-height:200px;
+}
+.pane textarea{resize:vertical; display:block}
+.pane textarea:focus{outline:2px solid var(--accent); outline-offset:-2px; border-radius:0 0 10px 10px}
+.pane.short textarea,.pane.short .out{min-height:130px}
+.placeholder{color:var(--muted)}
+
+.callout{margin-top:14px; padding:13px 16px; border-radius:10px; font-size:13.5px; border:1px solid var(--line); background:var(--panel)}
+.callout h5{margin:0 0 8px; font-size:14px; display:flex; gap:9px; align-items:center; flex-wrap:wrap}
+.callout ul{margin:0; padding-left:20px}
+.callout li{margin:4px 0}
+.callout.high{border-left:4px solid var(--high)}
+.callout.medium{border-left:4px solid var(--mid)}
+.callout.low{border-left:4px solid var(--low)}
+#rejects ul{padding-left:0; list-style:none}
+#rejects .cand{font-family:ui-monospace,Consolas,monospace; font-weight:600; background:var(--high-bg); color:var(--high); padding:1px 6px; border-radius:4px}
+#rejects li.info .cand{background:var(--accent-soft); color:var(--accent)}
+#rejects .why{color:var(--muted)}
+
+/* ── 層級說明 ── */
+.flow{display:grid; grid-template-columns:repeat(4,1fr); gap:10px; margin-bottom:30px; font-size:13.5px}
 @media (max-width:760px){.flow{grid-template-columns:1fr 1fr}}
-.flow div{
-  background:var(--panel); border:1px solid var(--line); border-radius:9px; padding:13px;
-}
-.flow b{display:block; font-size:12px; color:var(--accent); margin-bottom:4px}
+.flow div{padding:13px 14px}
+.flow b{display:block; font-size:12.5px; color:var(--accent); margin-bottom:3px}
 
-ul.tight{margin:8px 0; padding-left:20px}
-ul.tight li{margin:5px 0; font-size:14.5px}
-
-/* ── 預錄重現區 ── */
-.notice.warn{
-  background:var(--mid-bg); border-color:color-mix(in srgb,var(--mid) 35%,transparent);
-}
-.notice.warn strong{color:var(--mid)}
-.tabs{display:flex; gap:6px; flex-wrap:wrap; margin:20px 0 14px}
+/* ── 分頁 ── */
+.tabs{display:flex; gap:4px; flex-wrap:wrap; border-bottom:1px solid var(--line); margin-bottom:18px}
 .tab{
-  padding:8px 15px; border-radius:8px 8px 0 0; cursor:pointer; font-family:inherit;
-  font-size:13.5px; border:1px solid var(--line); border-bottom:none;
-  background:var(--bg); color:var(--muted);
+  padding:9px 15px; cursor:pointer; font-family:inherit; font-size:14.5px;
+  border:none; border-bottom:2px solid transparent; margin-bottom:-1px; background:none; color:var(--muted);
 }
-.tab[aria-selected="true"]{background:var(--panel); color:var(--accent); font-weight:600}
+.tab[aria-selected="true"]{color:var(--accent); border-bottom-color:var(--accent); font-weight:600}
 .tab:hover{color:var(--accent)}
-.provenance{
-  font-size:12.5px; color:var(--muted); margin:0 0 12px;
-  padding:8px 12px; background:var(--code); border-radius:7px;
-}
-.provenance b{color:var(--ink)}
+.tab .badge{font-size:11px; font-weight:600; padding:1px 7px; border-radius:999px; margin-left:6px; background:var(--code); color:var(--muted)}
+.tab .badge.live{background:var(--low-bg); color:var(--low)}
+.lead{margin:0 0 14px}
+.provenance{font-size:12.5px; color:var(--muted); margin:0 0 12px}
 
-.term{
-  background:#11151c; border-radius:9px; padding:14px 16px; overflow-x:auto;
-  font-family:ui-monospace,"Cascadia Code",Consolas,monospace; font-size:12.5px;
-  line-height:1.75; color:#cdd6e4; min-height:300px; white-space:pre-wrap; word-break:break-word;
-}
-.term .cmd{color:#8ad6a0}
-.term .warnline{color:#f0b866; font-weight:600}
-.term .infoline{color:#9fb4cf}
-.term .note{color:#6b7b91; font-style:italic}
-.term .hit{color:#7fb3ff; font-weight:600}
-.term .cursor{
-  display:inline-block; width:8px; height:14px; background:#cdd6e4;
-  vertical-align:-2px; animation:blink 1s step-end infinite;
-}
-@keyframes blink{50%{opacity:0}}
-.termbar{display:flex; gap:10px; align-items:center; margin:12px 0}
-
-.ba{display:grid; grid-template-columns:1fr 1fr; gap:14px; margin:12px 0}
-@media (max-width:760px){.ba{grid-template-columns:1fr}}
-
-/* ── 擴充模擬：假的聊天視窗 ── */
-.chat{
-  border:1px solid var(--line); border-radius:12px; overflow:hidden;
-  background:var(--panel); margin:18px 0 0;
-}
-.chat-head{
-  display:flex; align-items:center; gap:7px; padding:10px 14px;
-  background:var(--code); border-bottom:1px solid var(--line);
-}
-.chat-head .dot{width:10px; height:10px; border-radius:50%; background:var(--line)}
+/* 擴充模擬：聊天視窗 */
+.chat{overflow:hidden}
+.chat-head{display:flex; align-items:center; gap:7px; padding:9px 14px; background:var(--code); border-bottom:1px solid var(--line)}
+.chat-head .dot{width:9px; height:9px; border-radius:50%; background:var(--line)}
 .chat-title{margin-left:8px; font-size:12.5px; color:var(--muted)}
-.chat-body{padding:18px 16px; min-height:70px}
-.bubble{
-  display:inline-block; padding:9px 14px; border-radius:14px 14px 14px 4px;
-  background:var(--code); font-size:14px; color:var(--muted);
-}
+.chat-body{padding:16px}
+.bubble{display:inline-block; padding:8px 14px; border-radius:14px 14px 14px 4px; background:var(--code); font-size:14px; color:var(--muted)}
 .composer{padding:12px 14px 14px; border-top:1px solid var(--line)}
-.composer textarea{min-height:64px; font-size:13.5px}
+.composer textarea{
+  width:100%; min-height:84px; padding:11px 12px; border-radius:8px; resize:vertical;
+  border:1px solid var(--line); background:var(--bg); color:var(--ink);
+  font:13.5px/1.75 ui-monospace,Consolas,monospace;
+}
 .composer-bar{display:flex; align-items:center; gap:12px; margin-top:10px; flex-wrap:wrap}
 .composer-bar .hint{font-size:12.5px; color:var(--muted); flex:1; min-width:180px}
-
-#ext-result{
-  margin-top:16px; padding:14px 16px; border-radius:9px;
-  border:1px solid var(--line); background:var(--panel); font-size:13.5px;
-}
-#ext-result h5{margin:0 0 9px; font-size:14px}
 #ext-result .sent{
-  font-family:ui-monospace,Consolas,monospace; font-size:13px; line-height:1.8;
-  background:var(--code); padding:11px 13px; border-radius:7px;
-  white-space:pre-wrap; word-break:break-word; margin:8px 0;
+  font:13px/1.8 ui-monospace,Consolas,monospace; background:var(--code); padding:11px 13px;
+  border-radius:7px; white-space:pre-wrap; word-break:break-word; margin:8px 0;
 }
 #ext-result .verdict{font-size:13px; color:var(--muted); margin:0}
 #ext-result.good{border-left:4px solid var(--low)}
 #ext-result.raw{border-left:4px solid var(--high)}
 #ext-result.cancel{border-left:4px solid var(--muted)}
 
-/* ── 「為什麼沒抓到」說明區 ── */
-#rejects{
-  margin:0 0 16px; padding:13px 16px; border-radius:9px;
-  background:var(--code); border:1px solid var(--line); font-size:13.5px;
+/* 終端機重現 */
+.term{
+  background:#11151c; border-radius:10px; padding:14px 16px; overflow-x:auto;
+  font:12.5px/1.75 ui-monospace,"Cascadia Code",Consolas,monospace;
+  color:#cdd6e4; min-height:280px; white-space:pre-wrap; word-break:break-word;
 }
-#rejects h5{margin:0 0 8px; font-size:14px; color:var(--ink)}
-#rejects ul{margin:0; padding-left:0; list-style:none}
-#rejects li{
-  margin:7px 0; padding-left:22px; position:relative; line-height:1.65;
-}
-#rejects li::before{
-  content:"✕"; position:absolute; left:3px; top:0;
-  color:var(--high); font-weight:700;
-}
-#rejects li.info::before{content:"ℹ"; color:var(--accent)}
-#rejects .cand{
-  font-family:ui-monospace,Consolas,monospace; font-weight:600;
-  background:var(--high-bg); color:var(--high); padding:1px 6px; border-radius:4px;
-}
-#rejects li.info .cand{background:var(--accent-soft); color:var(--accent)}
-#rejects .why{color:var(--muted)}
-#rejects .punch{
-  margin:10px 0 0; padding-top:10px; border-top:1px dashed var(--line);
-  color:var(--muted); font-size:12.5px;
-}
+.term .cmd{color:#8ad6a0}
+.term .warnline{color:#f0b866; font-weight:600}
+.term .infoline{color:#9fb4cf}
+.term .note{color:#6b7b91; font-style:italic}
+.term .hit{color:#7fb3ff; font-weight:600}
+.term .cursor{display:inline-block; width:8px; height:14px; background:#cdd6e4; vertical-align:-2px; animation:blink 1s step-end infinite}
+@keyframes blink{50%{opacity:0}}
+.termbar{display:flex; gap:10px; align-items:center; margin:0 0 12px; font-size:13px; color:var(--muted)}
+pre.snippet{margin:0; padding:13px 15px; font-size:13px; line-height:1.75; overflow-x:auto}
+pre.snippet .c{color:var(--muted)}
 
-.usecase{display:grid; grid-template-columns:repeat(auto-fit,minmax(230px,1fr)); gap:14px; margin:16px 0}
-.usecase .card .body{min-height:0; white-space:normal; font-family:inherit; font-size:13.5px}
-.usecase b.who{display:block; color:var(--accent); font-size:14.5px; margin-bottom:5px}
-.ok{color:var(--low); font-weight:700}
-.no{color:var(--high); font-weight:700}
-footer{padding:36px 0 60px; color:var(--muted); font-size:13.5px}
-footer a{color:var(--accent)}
-.fine{font-size:13px; color:var(--muted); margin-top:10px}
+/* ── 完成度 ── */
+.tiles{display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin-bottom:30px}
+@media (max-width:860px){.tiles{grid-template-columns:1fr 1fr}}
+.tile{padding:14px 16px}
+.tile .k{font-size:12.5px; color:var(--muted); font-weight:600}
+.tile .v{font-size:27px; font-weight:700; color:var(--accent); line-height:1.4; font-variant-numeric:tabular-nums}
+.tile .v small{font-size:13px; font-weight:500; color:var(--ink)}
+.tile .d{font-size:12.5px; color:var(--muted)}
+ul.tight{margin:0; padding-left:20px}
+ul.tight li{margin:6px 0; font-size:14.5px}
+
+footer{padding:30px 0 56px; color:var(--muted); font-size:13.5px; border-top:1px solid var(--line)}
+footer p{margin:0 0 6px}
 </style>
 </head>
 <body>
 
+<nav>
+  <div class="wrap">
+    <span class="brand">本地端敏感資訊過濾機制</span>
+    <a href="#demo">試用</a>
+    <a class="opt" href="#why">為什麼需要</a>
+    <a class="opt" href="#how">怎麼運作</a>
+    <a class="opt" href="#status">完成度</a>
+    <a href="https://github.com/JustinGNPS/tw-pii-filter" target="_blank" rel="noopener">GitHub</a>
+  </div>
+</nav>
+
 <header>
   <div class="wrap">
-    <h1>本地端敏感資訊過濾機制</h1>
-    <p class="tagline">讓 AI 看不到你的個資，但仍然能幫你做事。</p>
-    <div class="links">
-      <a class="primary" href="#demo">▶ 立即試用</a>
-      <a href="https://github.com/JustinGNPS/tw-pii-filter" target="_blank" rel="noopener">GitHub 原始碼</a>
-    </div>
+    <h1>讓 AI 看不到你的個資，但仍然能幫你做事</h1>
+    <p class="tagline">資料送往雲端 AI 之前，先在本機把個資換成佔位符；AI 回覆之後，再自動換回來。</p>
   </div>
 </header>
+
+<section id="demo">
+  <div class="wrap">
+    <div class="chips">
+      <span class="label">範例</span>
+      <button class="chip" data-sample="service">客服通話紀錄</button>
+      <button class="chip" data-sample="resume">求職履歷</button>
+      <button class="chip" data-sample="code">程式設定檔</button>
+      <button class="chip" data-sample="quasi">沒有明碼個資</button>
+      <button class="chip ghost" data-sample="clear">清空</button>
+      <span class="local">全程在你的瀏覽器裡執行，不發送任何網路請求</span>
+    </div>
+
+    <div class="step" style="margin-top:0">
+      <div class="step-head">
+        <span class="num">1</span><b>送出前</b><span class="desc">個資換成佔位符</span>
+        <span class="meta">
+          <b id="s-count">0</b> 筆個資 · <b id="s-types">0</b> 種類別 · <b id="s-time">0</b> ms
+        </span>
+      </div>
+      <div class="cols">
+        <label class="card pane">
+          <span class="pane-title">你的原文（可以直接改）</span>
+          <textarea id="input" placeholder="在這裡貼上任何文字，或點上面的範例"></textarea>
+        </label>
+        <div class="card pane">
+          <span class="pane-title">雲端 AI 實際收到的</span>
+          <div class="out" id="out-masked"></div>
+        </div>
+      </div>
+    </div>
+
+    <div id="risk" class="callout" hidden></div>
+    <div id="rejects" class="callout" hidden></div>
+
+    <details id="detail" hidden>
+      <summary>偵測明細（<span id="detail-count">0</span> 筆）</summary>
+      <div class="card tablewrap">
+        <table>
+          <thead><tr><th>類別</th><th>原文</th><th>佔位符</th><th>風險</th><th>位置</th><th>判定依據</th></tr></thead>
+          <tbody id="detail-body"></tbody>
+        </table>
+      </div>
+    </details>
+
+    <div class="step">
+      <div class="step-head">
+        <span class="num">2</span><b>回覆後</b><span class="desc">佔位符換回真值</span>
+        <span class="meta" id="restore-note"></span>
+      </div>
+      <div class="cols">
+        <label class="card pane short">
+          <span class="pane-title">雲端 AI 的回覆（模擬，可以直接改）</span>
+          <textarea id="reply" placeholder="模擬的 AI 回覆會出現在這裡"></textarea>
+        </label>
+        <div class="card pane short">
+          <span class="pane-title">你實際看到的</span>
+          <div class="out" id="out-restored"></div>
+        </div>
+      </div>
+      <p class="fine">
+        對照表只存在這個分頁的記憶體裡。查不到對應真值的佔位符會原樣保留、絕不猜測 ——
+        在左邊的回覆裡打一個 <code>[TW_ID_9]</code> 試試看。
+      </p>
+    </div>
+  </div>
+</section>
 
 <section id="why">
   <div class="wrap">
     <h2>為什麼需要這個</h2>
-    <p class="sub">現有隱私防護工具對台灣個資幾乎無法偵測 —— 這是我們實測出來的數字，不是推論。</p>
-    <div class="tablewrap">
+    <p class="sub">現有工具對台灣個資幾乎偵測不到，而且沒有任何一個會驗證檢核碼。</p>
+    <div class="card tablewrap">
       <table>
-        <thead><tr><th>偵測類別</th><th>Presidio</th><th>GLiNER</th><th>LLM Guard</th><th>本作品</th></tr></thead>
+        <thead><tr><th>偵測類別（recall）</th><th>Presidio</th><th>GLiNER</th><th>LLM Guard</th><th>本作品</th></tr></thead>
         <tbody>
           <tr><td>人名</td><td>0.447</td><td>0.100</td><td>1.000</td><td>語意層 0.976</td></tr>
           <tr><td>地址</td><td>0.000</td><td>0.202</td><td>1.000</td><td>語意層支援</td></tr>
@@ -263,411 +322,200 @@ footer a{color:var(--accent)}
       </table>
     </div>
     <p class="fine">
-      數值為 recall（召回率）。測試語料為 300 筆合成台灣個資，涵蓋醫療對話、履歷、客服記錄三種情境，
-      全數為假資料；每個身分證與統編各生成「檢核碼正確」與「錯誤」兩版。固定 random seed、鎖定套件版本。
-      <br><b>關鍵解讀：</b>LLM Guard 在人名與地址上達到滿分 1.000，同一次執行卻在身分證上掛零 ——
-      不是中文能力不足，是設計裡從來沒有台灣。而且<b>沒有任何一個現有工具驗證檢核碼</b>。
+      LLM Guard 在人名與地址拿到滿分，同一次執行卻在身分證上掛零 —— 不是中文能力不足，是設計裡從來沒有台灣。
     </p>
-  </div>
-</section>
-
-<section id="demo">
-  <div class="wrap">
-    <h2>線上試用</h2>
-    <p class="sub">貼一段文字進去，看它在送給 AI 之前會變成什麼樣子。</p>
-
-    <div class="notice">
-      🔒 <strong>全部在你的瀏覽器裡執行。</strong>
-      這個頁面沒有後端、不發送任何網路請求，你貼進去的內容不會離開這台電腦 ——
-      這正是本作品的核心主張，所以展示頁自己也必須做到。
-    </div>
-
-    <div class="chips">
-      <span style="font-size:13px;color:var(--muted);align-self:center;margin-right:4px">試試看：</span>
-      <button class="chip" data-sample="service">客服通話紀錄</button>
-      <button class="chip" data-sample="resume">求職履歷</button>
-      <button class="chip" data-sample="code">程式設定檔</button>
-      <button class="chip" data-sample="clear">清空</button>
-    </div>
-
-    <textarea id="input" placeholder="在這裡貼上任何文字⋯⋯（或點上面的範例）"></textarea>
-
-    <div class="stats">
-      <span class="stat"><b id="s-count">0</b><span>筆個資（不重複值）</span></span>
-      <span class="stat"><b id="s-types">0</b><span>種類別</span></span>
-      <span class="stat"><b id="s-time">0</b><span>ms 偵測耗時</span></span>
-    </div>
-
-    <div id="rejects" hidden></div>
-
-    <div class="cols">
-      <div class="card">
-        <h4>① 你輸入的原文（偵測到的已標示）</h4>
-        <div class="body" id="out-orig"></div>
-      </div>
-      <div class="card">
-        <h4>② 遮蔽後 —— 這才是雲端 AI 看得到的內容</h4>
-        <div class="body" id="out-masked"></div>
-      </div>
-    </div>
-
-    <h3>偵測明細</h3>
-    <div class="tablewrap" id="detail-wrap">
-      <div class="empty" id="detail-empty">還沒有輸入文字。</div>
-      <table id="detail-table" hidden>
-        <thead><tr><th>類別</th><th>原文</th><th>佔位符</th><th>風險</th><th>位置</th><th>判定依據</th></tr></thead>
-        <tbody id="detail-body"></tbody>
-      </table>
-    </div>
-
-    <h3>③ 回程：AI 回覆之後，把佔位符換回真值</h3>
-    <p class="sub" style="margin-bottom:12px">
-      下面模擬一段「雲端 AI 的回覆」—— 它只認得佔位符。
-      按下還原，就是使用者實際看到的內容。對照表只存在這個分頁的記憶體裡。
-    </p>
-    <textarea id="reply" style="min-height:110px" placeholder="模擬的 AI 回覆會出現在這裡⋯⋯"></textarea>
-    <div style="margin:12px 0"><button class="go" id="btn-restore">還原 →</button></div>
-    <div class="card">
-      <h4>④ 還原後 —— 使用者實際看到的內容</h4>
-      <div class="body" id="out-restored"></div>
-    </div>
-    <p class="fine">
-      查不到對應真值的佔位符一律<b>原樣保留、絕不猜測</b> ——
-      雲端 AI 可能自己編出沒發過的佔位符（幻覺），猜測等同於憑空捏造一筆個資塞進使用者的內容裡。
-      你可以在上面那段回覆裡亂打一個 <code>[TW_ID_9]</code> 試試看。
-    </p>
-  </div>
-</section>
-
-<section id="ext">
-  <div class="wrap">
-    <h2>載體一：瀏覽器擴充長什麼樣</h2>
-    <p class="sub">
-      上面那段是「把文字丟進去看結果」。但一般使用者真正會碰到的介面長這樣 ——
-      在 ChatGPT 的輸入框裡按右鍵。
-    </p>
-
-    <div class="notice">
-      ✅ <strong>下面那個確認面板是擴充的真品，不是仿製品。</strong>
-      這一段直接 <code>import</code> 了擴充的 <code>content/panel.ts</code> 與
-      <code>masking.ts</code>，流程也照 <code>content/index.ts</code> 走一遍
-      （預覽配號 → 確認面板 → 依勾選結果正式配號 → 插入）。
-      <b>你在這裡按到的，就是裝上擴充後會看到的那個東西。</b>
-    </div>
-
-    <div class="chat">
-      <div class="chat-head">
-        <span class="dot"></span><span class="dot"></span><span class="dot"></span>
-        <span class="chat-title">某 AI 聊天網站</span>
-      </div>
-      <div class="chat-body">
-        <div class="bubble">有什麼可以幫你的嗎？</div>
-      </div>
-      <div class="composer">
-        <textarea id="chat-input" rows="3"></textarea>
-        <div class="composer-bar">
-          <span class="hint" id="chat-hint">↑ 這是你剪貼簿裡的內容，準備貼進去</span>
-          <button class="go" id="btn-ext">🖱 右鍵 → 🛡 隱私處理後貼上</button>
-        </div>
-      </div>
-    </div>
-
-    <div id="ext-result" hidden></div>
-
-    <p class="fine">
-      <b>三個刻意的設計：</b>
-      <b>① 每一項都能取消勾選</b> —— 偵測是輔助不是強制，使用者有最終決定權；
-      <b>② 信心值低於 0.7 會特別標紅</b> 提醒「這筆可能是誤判，自己看一眼」；
-      <b>③ 沒偵測到東西時面板完全不跳</b> —— 不打擾是擴充能被長期留著的前提。
-      <br><br>
-      實際的擴充用 <b>Shadow DOM</b> 把面板隔離在宿主網頁之外：
-      ChatGPT、Gemini 這些網站的 global CSS 極具侵略性，不隔離樣式會被洗掉，
-      也可能反過來汙染對方的頁面。
-    </p>
-  </div>
-</section>
-
-<section id="full">
-  <div class="wrap">
-    <h2>完整系統還能做什麼</h2>
-    <p class="sub">
-      上面那段是在<b>你的瀏覽器裡即時運算</b>的，但那只是規則層（L1）。
-      完整系統還有三塊能力塞不進網頁 —— 下面是它們實際執行時留下的紀錄。
-    </p>
-
-    <div class="notice warn">
-      ⚠️ <strong>以下三段是「預錄重現」，不是本頁即時運算。</strong>
-      每一段都標明出處與執行日期，內容是<b>真實執行結果，沒有美化、沒有手寫假造</b>。
-      會這樣做是因為：Proxy 需要後端、語意層要下載數百 MB 模型權重，網頁都做不到。
-    </div>
-
-    <div class="tabs" role="tablist">
-      <button class="tab" role="tab" aria-selected="true" data-tab="proxy">① Proxy 攔截 AI Agent</button>
-      <button class="tab" role="tab" aria-selected="false" data-tab="ner">② 語意層：人名與地址</button>
-      <button class="tab" role="tab" aria-selected="false" data-tab="risk">③ 組合風險評分</button>
-    </div>
-
-    <!-- ① Proxy -->
-    <div class="panel" id="tab-proxy">
-      <p class="provenance">
-        <b>出處：</b>2026-08-22 以真實 <b>Codex</b> 執行「修改一個含個資的檔案」任務時，
-        proxy 留下的終端機輸出（<code>proxy_writetest.log</code>）。時間戳與毫秒數皆為原值，
-        僅隱去上游端點網址。
+    <details>
+      <summary>這些數字怎麼測的</summary>
+      <p class="fine" style="margin-top:0">
+        測試語料為 300 筆合成台灣個資，涵蓋醫療對話、履歷、客服記錄三種情境，全數為假資料；
+        每個身分證與統編各生成「檢核碼正確」與「錯誤」兩版。固定 random seed、鎖定套件版本。
       </p>
-      <div class="termbar">
-        <button class="go" id="btn-play">▶ 播放攔截過程</button>
-        <span style="font-size:13px;color:var(--muted)" id="play-hint">約 20 秒</span>
-      </div>
-      <div class="term" id="term"></div>
-      <p class="fine">
-        <b>三行要注意的：</b>
-        「<b>第一個請求已抵達 proxy</b>」證明流量真的走了這裡，不是設定錯了還以為有保護；
-        「<b>已遮蔽：偵測到 N 筆</b>」報的是<b>這一輪新增的</b>個資，不是累計
-        （agent 每輪重送整段歷史，用累計數字會一路往上爬、失去意義）；
-        「<b>還原 N 筆</b>」是回程 —— AI 回覆裡的佔位符換回真值後才交給 agent，
-        所以寫進磁碟的檔案是正確內容，不是 <code>[TW_ID_1]</code>。
-      </p>
-    </div>
-
-    <!-- ② 語意層 -->
-    <div class="panel" id="tab-ner" hidden>
-      <p class="provenance">
-        <b>出處：</b>語意層真實模型端到端測試（<code>torch 2.3.1</code> /
-        <code>transformers 4.41.2</code>，模型 <code>gyr66/bert-base-chinese-finetuned-ner</code>）。
-        <b>模型在本機離線推論，不連任何雲端。</b>
-      </p>
-      <div class="ba">
-        <div class="card">
-          <h4>輸入（原文）</h4>
-          <div class="body">客服 陳大同 說客戶身分證是 A123456789，地址是台北市信義區虛構路1號，電話0912345678，信箱test@example.com</div>
-        </div>
-        <div class="card">
-          <h4>遮蔽後（雲端 AI 看到的）</h4>
-          <div class="body">客服 <span class="tok">[NAME_1]</span> 說客戶身分證是 <span class="tok">[TW_ID_1]</span>，地址是<span class="tok">[ADDRESS_1]</span>，電話<span class="tok">[TW_PHONE_M_1]</span>，信箱<span class="tok">[EMAIL_1]</span></div>
-        </div>
-      </div>
-      <div class="tablewrap">
-        <table>
-          <thead><tr><th>偵測到</th><th>來自哪一層</th><th>處理方式</th></tr></thead>
-          <tbody>
-            <tr><td>「客服」（職稱）</td><td>語意層 L2</td><td>偵測到但<b>預設不遮</b>（遮了會讓 AI 看不懂語境）</td></tr>
-            <tr><td>「陳大同」（人名）</td><td>語意層 L2</td><td class="ok">遮蔽 → <code>[NAME_1]</code></td></tr>
-            <tr><td>A123456789</td><td>規則層 L1 · 檢核碼</td><td class="ok">遮蔽 → <code>[TW_ID_1]</code></td></tr>
-            <tr><td>台北市信義區虛構路1號</td><td>語意層 L2</td><td class="ok">遮蔽 → <code>[ADDRESS_1]</code></td></tr>
-            <tr><td>0912345678</td><td>規則層 L1 · 格式</td><td class="ok">遮蔽 → <code>[TW_PHONE_M_1]</code></td></tr>
-            <tr><td>test@example.com</td><td>規則層 L1 · 格式</td><td class="ok">遮蔽 → <code>[EMAIL_1]</code></td></tr>
-          </tbody>
-        </table>
-      </div>
-      <p class="fine">
-        <b>還原後與原文逐字元相同</b>，5 筆全部還原、0 筆查無對照。
-        這一段證明的是<b>兩層獨立掃描、正確合併、還原無損</b> ——
-        人名與地址這種「沒有固定格式」的東西只有模型抓得到，
-        而身分證、電話這種「有檢核碼或固定格式」的東西只有規則層能確定性判定。
-        <b>兩層互補，缺一不可。</b>
-      </p>
-    </div>
-
-    <!-- ③ 組合風險 -->
-    <div class="panel" id="tab-risk" hidden>
-      <p class="provenance">
-        <b>出處：</b>直接呼叫 <code>core/risk/combination_risk.py</code> 的
-        <code>compute_combination_risk()</code> 所得的真實輸出。
-      </p>
-      <div class="card" style="margin-bottom:14px">
-        <h4>輸入：一段「每個欄位單獨看都不算個資」的文字</h4>
-        <div class="body">這位患者 32 歲男性，住在新竹市東區，是某科技公司的資深後端工程師，上週因罕見疾病在本院門診追蹤。</div>
-      </div>
-      <div class="term" style="min-height:0">
-<span class="warnline">組合風險 1.00（高）：ADDRESS、AGE、COMPANY、GENDER、POSITION 同時出現，
-即使明碼個資已遮蔽，仍可能指認到特定個人</span>
-<span class="infoline">    · 地址建議泛化到市/縣級（例如「信義區光復路259巷」→「台北市」）
-    · 「32歲」建議泛化為「30-34歲」
-    · 公司名稱可模糊化為產業別（例如「某科技公司」）
-    · 若非必要，建議省略性別資訊
-    · 職稱可保留，但建議避免同時透露服務公司名稱</span></div>
-      <p class="fine">
-        <b>這裡面沒有任何一個欄位是傳統定義的「個資」</b> ——
-        沒有姓名、沒有身分證、沒有電話。但年齡 + 居住地 + 公司 + 職稱 + 性別湊在一起，
-        就足以指認到特定個人。
-        <br><br>
-        <b>我們的策略是「提示」而不是「強行遮蔽」</b>：全部遮掉會讓 AI 無法作答
-        （「32 歲」被遮掉，醫療諮詢就失去意義），所以系統估算風險、給出泛化建議，
-        <b>由使用者自己決定</b>。arXiv 2026 的論文實測八種去識別化技術後，
-        「隱含身分」的語意洩漏率仍高達 95% —— 這是公認的開放問題，
-        <b>而現有工具全數沒有這個功能。</b>
-      </p>
-    </div>
+    </details>
   </div>
 </section>
 
 <section id="how">
   <div class="wrap">
-    <h2>系統怎麼運作</h2>
-    <p class="sub">語言模型判斷「像不像」，檢核碼判斷「是不是」—— 個資防護兩者都需要。</p>
+    <h2>怎麼運作</h2>
+    <p class="sub">語言模型判斷「像不像」，檢核碼判斷「是不是」。一個偵測核心，兩種使用方式。</p>
 
     <div class="flow">
-      <div><b>L1 規則驗證層</b>身分證、統編、健保卡號的檢核碼演算法，確定性判定</div>
-      <div><b>L2 語意偵測層</b>本地 NER 小模型處理人名、地址、機構等上下文實體</div>
-      <div><b>L3 組合風險評分</b>偵測準識別子共現，估算再識別風險並提出警示</div>
-      <div><b>還原</b>AI 回覆時依固定格式把佔位符換回真值，使用者無感</div>
+      <div class="card"><b>L1 規則驗證</b>身分證、統編、健保卡號的檢核碼演算法，確定性判定</div>
+      <div class="card"><b>L2 語意偵測</b>本地 NER 模型處理人名、地址這類沒有固定格式的實體</div>
+      <div class="card"><b>L3 組合風險</b>年齡、居住地、職稱同時出現時估算再識別風險</div>
+      <div class="card"><b>還原</b>AI 回覆時把佔位符換回真值，使用者無感</div>
     </div>
 
-    <h3>兩個載體，一個核心</h3>
-    <div class="cols">
-      <div class="card"><h4>瀏覽器擴充（面向一般使用者）</h4><div class="body" style="white-space:normal;font-family:inherit">
-        選取文字按右鍵「隱私處理後貼上」，貼進 ChatGPT 的已經是遮蔽後的內容。
-        側邊面板即時顯示偵測到什麼、風險多少。<b>TypeScript 實作。</b>
-      </div></div>
-      <div class="card"><h4>API Proxy（面向開發者）</h4><div class="body" style="white-space:normal;font-family:inherit">
-        攔在 AI coding agent 與雲端 LLM 之間。Agent 讀到 <code>.env</code> 或客戶名單時自動攔下，
-        回覆時自動還原，工作流程完全不變。<b>Python 實作。</b>
-      </div></div>
+    <div class="tabs" role="tablist">
+      <button class="tab" role="tab" aria-selected="true" data-tab="ext">瀏覽器擴充<span class="badge live">可操作</span></button>
+      <button class="tab" role="tab" aria-selected="false" data-tab="proxy">API Proxy<span class="badge">實錄</span></button>
+      <button class="tab" role="tab" aria-selected="false" data-tab="ner">語意層<span class="badge">實錄</span></button>
     </div>
 
-    <h3>六款 AI Agent 實測通過 —— 以及我們誠實說攔不到的那一款</h3>
-    <div class="tablewrap">
-      <table>
-        <thead><tr><th>Agent</th><th>接入方式</th><th>編輯機制</th><th>狀態</th></tr></thead>
-        <tbody>
-          <tr><td>Aider</td><td class="mono">OPENAI_API_BASE</td><td>純文字回覆</td><td class="ok">✓ 實測通過</td></tr>
-          <tr><td>Cline</td><td>GUI 設定</td><td>function calling</td><td class="ok">✓ 實測通過</td></tr>
-          <tr><td>Continue</td><td class="mono">config.yaml</td><td>function calling</td><td class="ok">✓ 實測通過</td></tr>
-          <tr><td>OpenCode</td><td>自訂 provider</td><td>function calling</td><td class="ok">✓ 實測通過</td></tr>
-          <tr><td>Codex</td><td>Responses API</td><td>欄位結構完全不同</td><td class="ok">✓ 實測通過</td></tr>
-          <tr><td>Claude Code</td><td>Anthropic Messages API</td><td>另建協定翻譯層</td><td class="ok">✓ 實測通過</td></tr>
-          <tr><td><b>Cursor</b></td><td>廠商代管後端，無自訂位址欄位</td><td>—</td><td class="no">✗ 不支援</td></tr>
-        </tbody>
-      </table>
-    </div>
-    <p class="fine">
-      Cursor 走自家後端、不開放自訂 API 位址，<b>任何本地攔截方案都攔不到</b>，不是實作上的取捨。
-      我們把這個邊界寫進設計文件並說明原因，而不是避而不談。
-    </p>
-  </div>
-</section>
-
-<section id="use">
-  <div class="wrap">
-    <h2>誰該用哪一個</h2>
-    <p class="sub">兩個載體面向的使用者不同。先看你是哪一種。</p>
-
-    <div class="usecase">
-      <div class="card"><div class="body">
-        <b class="who">一般民眾</b>
-        要把租賃契約、履歷、病歷貼給 ChatGPT 問問題，但不想連身分證跟住址一起送出去。
-        <hr style="border:none;border-top:1px solid var(--line);margin:10px 0">
-        <b>→ 用瀏覽器擴充。</b>選取文字按右鍵「隱私處理後貼上」即可，不用裝 Python。
-      </div></div>
-      <div class="card"><div class="body">
-        <b class="who">開發者</b>
-        用 Aider / Cline / Codex 這類 AI coding agent，但專案裡有 <code>.env</code>、
-        有客戶名單，agent 自己讀檔你根本不知道它送了什麼出去。
-        <hr style="border:none;border-top:1px solid var(--line);margin:10px 0">
-        <b>→ 用 API Proxy。</b>改一行 base URL，工作流程完全不變。
-      </div></div>
-      <div class="card"><div class="body">
-        <b class="who">醫療 / 法律 / 會計</b>
-        受職業保密義務規範，現在幾乎不敢碰 AI 工具。
-        <hr style="border:none;border-top:1px solid var(--line);margin:10px 0">
-        <b>→ 兩個都用，並開啟語意層。</b>人名、地址、病歷號都要擋，組合風險提示也用得上。
-      </div></div>
-      <div class="card"><div class="body">
-        <b class="who">中小企業</b>
-        沒預算導入企業級 DLP 方案，但一樣有個資法與 AI 基本法的法遵義務。
-        <hr style="border:none;border-top:1px solid var(--line);margin:10px 0">
-        <b>→ 團隊共用一台 Proxy。</b>集中稽核，但資料仍然不出內網。
-      </div></div>
+    <!-- 瀏覽器擴充 -->
+    <div class="panel" id="tab-ext">
+      <p class="lead">
+        <b>給一般使用者。</b>在 ChatGPT 這類網站的輸入框按右鍵「隱私處理後貼上」，貼進去的已經是遮蔽後的內容。
+        只需要 Chrome 或 Edge，不用裝 Python。
+      </p>
+      <div class="card chat">
+        <div class="chat-head">
+          <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+          <span class="chat-title">某 AI 聊天網站</span>
+        </div>
+        <div class="chat-body"><div class="bubble">有什麼可以幫你的嗎？</div></div>
+        <div class="composer">
+          <textarea id="chat-input" rows="3"></textarea>
+          <div class="composer-bar">
+            <span class="hint" id="chat-hint">這是你剪貼簿裡的內容，準備貼進去</span>
+            <button class="go" id="btn-ext">右鍵 → 隱私處理後貼上</button>
+          </div>
+        </div>
+      </div>
+      <div id="ext-result" class="callout" hidden></div>
+      <p class="fine">
+        跳出來的確認面板是擴充的真品：這一段直接 <code>import</code> 擴充的 <code>content/panel.ts</code>，不是仿製。
+        每一項都能取消勾選，信心值低於 0.7 會標紅提醒；沒偵測到個資、也沒有組合風險時，面板不會跳出來。
+      </p>
     </div>
 
-    <h3>需要裝什麼</h3>
-    <div class="tablewrap">
-      <table>
-        <thead><tr><th>你要用的</th><th>環境需求</th><th>套件</th><th>額外下載</th></tr></thead>
-        <tbody>
-          <tr>
-            <td><b>瀏覽器擴充</b><br><span style="color:var(--muted);font-size:12px">一般使用者</span></td>
-            <td>Chrome / Edge</td>
-            <td>Node.js 18+（僅建置時需要）</td>
-            <td class="ok">無</td>
-          </tr>
-          <tr>
-            <td><b>API Proxy</b><br><span style="color:var(--muted);font-size:12px">規則層，預設</span></td>
-            <td>Python 3.11</td>
-            <td class="mono">fastapi · uvicorn · httpx · python-dotenv</td>
-            <td class="ok">無</td>
-          </tr>
-          <tr>
-            <td><b>＋ 語意層（選配）</b><br><span style="color:var(--muted);font-size:12px">人名 / 地址 / 機構</span></td>
-            <td>Python 3.11</td>
-            <td class="mono">torch 2.3.1 · transformers 4.41.2 · tokenizers · numpy</td>
-            <td>模型權重約 400 MB<br><span style="color:var(--muted);font-size:12px">只下載一次，之後離線推論</span></td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
-    <p class="fine">
-      <b>語意層預設關閉是刻意的</b>：它會讓每個請求多付一筆推論成本，而且
-      <code>torch</code> / <code>transformers</code> 體積很大。只有在需要遮蔽人名、地址時才開
-      （<code>PII_ENABLE_NER=1</code>）。<b>關閉時 proxy 完全不會 import 這些套件</b>，
-      不裝也跑得起來。
-      <br><br>
-      <b>套件版本全部鎖死</b>，不擅自升級 —— 團隊踩過「降級改變實驗結果」的坑。
-    </p>
+    <!-- API Proxy -->
+    <div class="panel" id="tab-proxy" hidden>
+      <p class="lead">
+        <b>給開發者與團隊。</b>攔在 AI coding agent 與雲端 LLM 之間。Agent 讀到 <code>.env</code>
+        或客戶名單時自動遮蔽，回覆時自動還原，只要改一行 base URL。
+      </p>
+      <div class="termbar">
+        <button class="go" id="btn-play">播放攔截過程</button>
+        <span id="play-hint">約 20 秒</span>
+      </div>
+      <div class="term" id="term"></div>
+      <p class="provenance" style="margin-top:10px">
+        出處：2026-08-22 以真實 Codex 執行「修改一個含個資的檔案」任務時 proxy 留下的終端機輸出。
+        時間戳與毫秒數皆為原值，僅隱去上游端點網址。Proxy 需要後端，無法在網頁上即時執行。
+      </p>
 
-    <h3>導入長什麼樣子</h3>
-    <div class="card">
-      <h4>以 Aider 為例，一行環境變數</h4>
-      <div class="body"><span style="color:var(--muted)"># 1. 啟動本地 proxy</span>
+      <details>
+        <summary>支援哪些 AI agent</summary>
+        <div class="card tablewrap">
+          <table>
+            <thead><tr><th>Agent</th><th>接入方式</th><th>編輯機制</th><th>狀態</th></tr></thead>
+            <tbody>
+              <tr><td>Aider</td><td class="mono">OPENAI_API_BASE</td><td>純文字回覆</td><td class="ok">實測通過</td></tr>
+              <tr><td>Cline</td><td>GUI 設定</td><td>function calling</td><td class="ok">實測通過</td></tr>
+              <tr><td>Continue</td><td class="mono">config.yaml</td><td>function calling</td><td class="ok">實測通過</td></tr>
+              <tr><td>OpenCode</td><td>自訂 provider</td><td>function calling</td><td class="ok">實測通過</td></tr>
+              <tr><td>Codex</td><td>Responses API</td><td>欄位結構完全不同</td><td class="ok">實測通過</td></tr>
+              <tr><td>Claude Code</td><td>Anthropic Messages API</td><td>另建協定翻譯層</td><td class="ok">實測通過</td></tr>
+              <tr><td><b>Cursor</b></td><td>廠商代管後端，無自訂位址欄位</td><td>—</td><td class="no">不支援</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="fine">Cursor 走自家後端、不開放自訂 API 位址，任何本地攔截方案都攔不到。</p>
+      </details>
+
+      <details>
+        <summary>怎麼導入（以 Aider 為例）</summary>
+        <div class="card">
+<pre class="snippet"><span class="c"># 1. 啟動本地 proxy（Python 3.11）</span>
 .venv\Scripts\python.exe -m uvicorn proxy.main:app --port 8010
 
-<span style="color:var(--muted)"># 2. 讓 agent 指向它</span>
+<span class="c"># 2. 讓 agent 指向它</span>
 set OPENAI_API_BASE=http://127.0.0.1:8010/v1
 
-<span style="color:var(--muted)"># 3. 照常使用 —— 工作流程完全不變</span>
-aider</div>
+<span class="c"># 3. 照常使用</span>
+aider</pre>
+        </div>
+        <p class="fine">
+          其他 agent 只差在怎麼告訴它 base URL 換了；遮蔽與還原的邏輯完全共用，不是六套程式。
+        </p>
+      </details>
     </div>
-    <p class="fine">
-      其他 agent 只差在「怎麼告訴它 base URL 換了」：Cline 在 GUI 填、
-      Continue 改 <code>config.yaml</code>、Codex 與 OpenCode 改自己的設定檔、
-      Claude Code 設 <code>ANTHROPIC_BASE_URL</code>。
-      <b>遮蔽與還原的邏輯完全共用，不是六套程式。</b>
-    </p>
+
+    <!-- 語意層 -->
+    <div class="panel" id="tab-ner" hidden>
+      <p class="lead">
+        <b>選配。</b>人名與地址沒有固定格式，要靠本地 NER 模型。開啟後需另外下載約 400 MB 的模型權重，
+        之後離線推論；預設關閉，關閉時完全不會載入相關套件。
+      </p>
+      <div class="cols">
+        <div class="card pane short">
+          <span class="pane-title">原文</span>
+          <div class="out">客服 陳大同 說客戶身分證是 A123456789，地址是台北市信義區虛構路1號，電話0912345678，信箱test@example.com</div>
+        </div>
+        <div class="card pane short">
+          <span class="pane-title">雲端 AI 實際收到的</span>
+          <div class="out">客服 <span class="tok">[NAME_1]</span> 說客戶身分證是 <span class="tok">[TW_ID_1]</span>，地址是<span class="tok">[ADDRESS_1]</span>，電話<span class="tok">[TW_PHONE_M_1]</span>，信箱<span class="tok">[EMAIL_1]</span></div>
+        </div>
+      </div>
+      <div class="card tablewrap" style="margin-top:14px">
+        <table>
+          <thead><tr><th>偵測到</th><th>來自哪一層</th><th>處理方式</th></tr></thead>
+          <tbody>
+            <tr><td>「客服」（職稱）</td><td>語意層 L2</td><td>偵測到但預設不遮（遮了 AI 會看不懂語境）</td></tr>
+            <tr><td>「陳大同」（人名）</td><td>語意層 L2</td><td class="ok">遮蔽</td></tr>
+            <tr><td>台北市信義區虛構路1號</td><td>語意層 L2</td><td class="ok">遮蔽</td></tr>
+            <tr><td>A123456789</td><td>規則層 L1 · 檢核碼</td><td class="ok">遮蔽</td></tr>
+            <tr><td>0912345678</td><td>規則層 L1 · 格式</td><td class="ok">遮蔽</td></tr>
+            <tr><td>test@example.com</td><td>規則層 L1 · 格式</td><td class="ok">遮蔽</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="provenance" style="margin-top:10px">
+        出處：語意層真實模型端到端測試（<code>torch 2.3.1</code> / <code>transformers 4.41.2</code>，
+        模型 <code>gyr66/bert-base-chinese-finetuned-ner</code>），本機離線推論。還原後與原文逐字元相同。
+        模型體積太大，無法在網頁上即時執行。
+      </p>
+    </div>
+
+    <h3 style="margin-top:34px">誰該用哪一個</h3>
+    <div class="card tablewrap">
+      <table>
+        <thead><tr><th>使用者</th><th>情境</th><th>建議</th></tr></thead>
+        <tbody>
+          <tr><td><b>一般民眾</b></td><td>把契約、履歷、病歷貼給 ChatGPT 問問題</td><td>瀏覽器擴充</td></tr>
+          <tr><td><b>開發者</b></td><td>用 AI coding agent，專案裡有 <code>.env</code> 與客戶名單</td><td>API Proxy</td></tr>
+          <tr><td><b>醫療／法律／會計</b></td><td>受職業保密義務規範</td><td>兩者並用，開啟語意層</td></tr>
+          <tr><td><b>中小企業</b></td><td>沒有企業級 DLP 預算，但有法遵義務</td><td>團隊共用一台 Proxy，資料不出內網</td></tr>
+        </tbody>
+      </table>
+    </div>
   </div>
 </section>
 
-<section id="numbers">
+<section id="status">
   <div class="wrap">
-    <h2>工程完成度</h2>
-    <p class="sub">以下每個數字都可以在 repo 裡當場重現。</p>
-    <div class="cols" style="grid-template-columns:repeat(auto-fit,minmax(210px,1fr))">
-      <div class="card"><h4>自動化測試</h4><div class="body" style="white-space:normal;font-family:inherit">
-        <b style="font-size:26px;color:var(--accent)">477</b> 項全數通過<br>
-        <span style="color:var(--muted);font-size:13px">Python 415 ＋ 瀏覽器擴充 62，另有 108 項 subtest</span>
-      </div></div>
-      <div class="card"><h4>隱私防護的延遲成本</h4><div class="body" style="white-space:normal;font-family:inherit">
-        <b style="font-size:26px;color:var(--accent)">0.25%</b> 佔 LLM 往返<br>
-        <span style="color:var(--muted);font-size:13px">規則層約 5 ms，上游 LLM 本身 1,400–2,900 ms</span>
-      </div></div>
-      <div class="card"><h4>瀏覽器端處理速度</h4><div class="body" style="white-space:normal;font-family:inherit">
-        <b style="font-size:26px;color:var(--accent)">2.4</b> ms／2 萬字<br>
-        <span style="color:var(--muted);font-size:13px">2 千字僅 0.14 ms</span>
-      </div></div>
-      <div class="card"><h4>兩版一致性</h4><div class="body" style="white-space:normal;font-family:inherit">
-        <b style="font-size:26px;color:var(--accent)">32</b> 項比對測試<br>
-        <span style="color:var(--muted);font-size:13px">自動檢查 Python 版與 TypeScript 版是否講出不同的話</span>
-      </div></div>
+    <h2>完成度與限制</h2>
+    <p class="sub">以下每個數字都可以在 repo 裡重現。</p>
+    <div class="tiles">
+      <div class="card tile">
+        <div class="k">自動化測試</div>
+        <div class="v">553 <small>項全數通過</small></div>
+        <div class="d">Python 455 ＋ 瀏覽器擴充 98</div>
+      </div>
+      <div class="card tile">
+        <div class="k">延遲成本</div>
+        <div class="v">0.25% <small>佔 LLM 往返</small></div>
+        <div class="d">規則層約 5 ms，上游 1,400–2,900 ms</div>
+      </div>
+      <div class="card tile">
+        <div class="k">瀏覽器端速度</div>
+        <div class="v">2.4 <small>ms／2 萬字</small></div>
+        <div class="d">2 千字僅 0.14 ms</div>
+      </div>
+      <div class="card tile">
+        <div class="k">兩版一致性</div>
+        <div class="v">50 <small>項比對測試</small></div>
+        <div class="d">Python 版與 TypeScript 版逐筆比對</div>
+      </div>
     </div>
 
-    <h3>我們知道自己的限制</h3>
+    <h3>已知限制</h3>
     <ul class="tight">
-      <li><b>關聯性洩漏（刻意取捨）</b>：「[NAME_1] 的電話是 [TW_PHONE_M_1]」這個<i>關聯</i>本身仍然保留。
-          要讓 AI 還能正常做事，就不能把結構也打碎。</li>
-      <li><b>組合風險只提示、不強制遮蔽</b>：由使用者判斷。過度遮蔽會讓 AI 無法作答。</li>
-      <li><b>計數是「不重複字面值」不是「不重複當事人」</b>：同一張身分證的全形與半形寫法會拿到兩個佔位符，
-          因為還原時必須知道原本是哪種寫法 —— 統一正規化等於偷改使用者原文。</li>
-      <li><b>這個展示頁只跑規則層（L1）</b>：語意層需要下載 NER 模型，不適合放在網頁裡。
-          人名、地址的偵測請用完整版。</li>
+      <li><b>關聯性仍然保留。</b>「[NAME_1] 的電話是 [TW_PHONE_M_1]」這個關聯不會被打碎，否則 AI 無法正常作答。</li>
+      <li><b>組合風險只提示、不強制遮蔽。</b>過度遮蔽會讓 AI 無法作答，由使用者判斷。</li>
+      <li><b>計數是不重複的字面值，不是當事人。</b>同一張身分證的全形與半形寫法會拿到兩個佔位符，還原時才能換回原本的寫法。</li>
+      <li><b>這一頁只跑規則層與組合風險。</b>人名、地址的偵測需要語意層，請用完整版。</li>
     </ul>
   </div>
 </section>
@@ -679,8 +527,7 @@ aider</div>
       <a href="https://github.com/JustinGNPS/tw-pii-filter" target="_blank" rel="noopener">github.com/JustinGNPS/tw-pii-filter</a>
     </p>
     <p class="fine">
-      本頁所有範例資料皆為合成假資料（檢核碼刻意產生為有效，以便展示偵測效果），
-      不含、也不接受任何真實個資。本頁為純靜態網頁，不蒐集任何資料、沒有 cookie、沒有追蹤。
+      本頁範例皆為合成假資料（檢核碼刻意為有效，以便展示偵測效果）。純靜態網頁，不蒐集任何資料、沒有 cookie、沒有追蹤。
     </p>
   </div>
 </footer>

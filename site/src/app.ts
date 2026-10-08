@@ -17,15 +17,17 @@
  * 伺服器去掃描，主張當場破功。所以這頁沒有任何 fetch/XHR，
  * 打包後是一個可以離線開啟的 HTML 檔。
  *
- * ## 語意層（L2）與組合風險（L3）不在這裡
+ * ## 語意層（L2）不在這裡，組合風險（L3）在
  *
- * 語意層需要下載 NER 模型權重（數百 MB），不適合放進網頁；
- * 組合風險的 TypeScript 移植尚未併入主線。頁面上已明確標示這件事，
- * 不假裝這裡展示的是完整系統。
+ * 語意層需要下載 NER 模型權重（數百 MB），不適合放進網頁，頁面上以標明出處的
+ * 實錄呈現。組合風險用的是擴充的 TypeScript 移植（`detectAll()` 回傳的
+ * `combination_risk`），但少了語意層，能計入的準識別子只有年齡與性別——
+ * 頁面上會說明這一點，不假裝這裡展示的是完整系統。
  */
 
 import {
   detectAll,
+  type CombinationRisk,
   isValidTwId,
   isValidTwPhoneM,
   isValidTwTax,
@@ -52,7 +54,7 @@ import { PlaceholderAllocator } from '../../extension/src/placeholder';
 // 它們本來就是公開的測試值，不構成「新散布一批可用號碼」。
 // ────────────────────────────────────────────────────────────
 const SAMPLES: Record<string, string> = {
-  service: `客服通話紀錄 #20261008-042
+  service: `客服通話紀錄 #1008-042
 來電者：王大明，身分證 A123456789，手機 0912345678
 公司統編 12345675，市話 02-27208889
 電子郵件 wang.daming@example.com.tw
@@ -76,6 +78,12 @@ OPENAI_API_KEY=sk-proj-aB3dE5fG7hJ9kL1mN3pQ5rS7tU9vW1xY3zA5bC7dE9fG1hJ3
 王大明,A123456789,0912345678,wang@example.com
 
 這段匯出程式有 bug，幫我看一下為什麼客戶資料會重複。`,
+
+  // 一個明碼個資都沒有，用來展示組合風險（L3）。
+  quasi: `這位患者 32 歲男性，住在新竹市東區，是某科技公司的資深後端工程師，
+上週因罕見疾病在本院門診追蹤。
+
+請幫我把這段病歷摘要改寫成給家屬看的說明。`,
 };
 
 const $ = <T extends HTMLElement>(id: string): T =>
@@ -83,12 +91,12 @@ const $ = <T extends HTMLElement>(id: string): T =>
 
 const input = $<HTMLTextAreaElement>('input');
 const reply = $<HTMLTextAreaElement>('reply');
-const outOrig = $<HTMLDivElement>('out-orig');
 const outMasked = $<HTMLDivElement>('out-masked');
 const outRestored = $<HTMLDivElement>('out-restored');
-const detailTable = $<HTMLTableElement>('detail-table');
+const restoreNote = $<HTMLSpanElement>('restore-note');
+const detail = $<HTMLDetailsElement>('detail');
 const detailBody = $<HTMLTableSectionElement>('detail-body');
-const detailEmpty = $<HTMLDivElement>('detail-empty');
+const riskBox = $<HTMLDivElement>('risk');
 
 /** 目前這段輸入的對照表（佔位符 → 真值）。只存在記憶體，重新輸入就重建。 */
 let mapping = new Map<string, string>();
@@ -100,34 +108,53 @@ function escapeHtml(s: string): string {
     .replace(/>/g, '&gt;');
 }
 
+const muted = (text: string): string => `<span class="placeholder">${text}</span>`;
+
 /**
- * 把原文中偵測到的片段標起來。
- *
- * 由後往前插入標記，理由與遮蔽完全相同：先動前面會讓後面 span 的
- * 座標失效（docs/B_design.md 決定 4）。這是整個專題最容易踩的坑，
- * 展示頁自己也躲不掉。
+ * 把遮蔽後文字裡的佔位符標成藍色，讓「雲端看到什麼」一眼可辨。
+ * 滑鼠移上去看得到它原本是什麼（只查本頁記憶體裡的對照表）。
  */
-function highlight(text: string, spans: Span[]): string {
-  const sorted = [...spans].sort((a, b) => a.start - b.start);
-  let html = '';
-  let cursor = 0;
-  for (const span of sorted) {
-    html += escapeHtml(text.slice(cursor, span.start));
-    html +=
-      `<mark class="r-${riskLevel(span.type)}" title="${escapeHtml(typeLabel(span.type))}">` +
-      `${escapeHtml(span.text)}</mark>`;
-    cursor = span.end;
-  }
-  html += escapeHtml(text.slice(cursor));
-  return html;
+function highlightTokens(masked: string, table?: Map<string, string>): string {
+  return escapeHtml(masked).replace(/\[[A-Z][A-Z_]*_\d+\]/g, (token) => {
+    const original = table?.get(token);
+    const title = original === undefined ? '' : ` title="${escapeHtml(original).replace(/"/g, '&quot;')}"`;
+    return `<span class="tok"${title}>${token}</span>`;
+  });
 }
 
-/** 把遮蔽後文字裡的佔位符標成藍色，讓「雲端看到什麼」一眼可辨。 */
-function highlightTokens(masked: string): string {
-  return escapeHtml(masked).replace(
-    /\[[A-Z][A-Z_]*_\d+\]/g,
-    (token) => `<span class="tok">${token}</span>`,
-  );
+// ────────────────────────────────────────────────────────────
+// 組合風險（L3）
+//
+// 這一頁沒有語意層，所以 spans 裡不會有 ADDRESS／COMPANY／POSITION，
+// 能計入的準識別子只剩文字本身掃得到的 AGE 與 GENDER。分數因此會比
+// 完整系統低——照實顯示並說明原因，不另外補一個比較好看的數字。
+// ────────────────────────────────────────────────────────────
+const QUASI_LABEL: Record<string, string> = {
+  AGE: '年齡',
+  GENDER: '性別',
+  ADDRESS: '地址',
+  POSITION: '職稱',
+  COMPANY: '公司',
+  ORGANIZATION: '機構',
+  GOVERNMENT: '政府機關',
+  SCENE: '地點',
+};
+
+function renderRisk(risk: CombinationRisk | null): void {
+  if (!risk || risk.score <= 0) {
+    riskBox.hidden = true;
+    return;
+  }
+  const cls = risk.risk_level === '高' ? 'high' : risk.risk_level === '中' ? 'medium' : 'low';
+  const types = risk.contributing_types.map((t) => QUASI_LABEL[t] ?? t).join('、');
+  riskBox.className = `callout ${cls}`;
+  riskBox.innerHTML =
+    `<h5><span class="pill ${cls}">組合風險 ${risk.risk_level} · ${risk.score.toFixed(2)}</span>` +
+    `${escapeHtml(types)}同時出現，合起來仍可能指認到特定個人</h5>` +
+    `<ul>${risk.suggestions.map((s) => `<li>${escapeHtml(s)}</li>`).join('')}</ul>` +
+    '<p class="fine">這裡只提示、不強制遮蔽，由你決定要不要改寫。' +
+    '這一頁沒有語意層，只計入年齡與性別；完整系統還會計入地址、公司與職稱。</p>';
+  riskBox.hidden = false;
 }
 
 // ────────────────────────────────────────────────────────────
@@ -139,7 +166,7 @@ function highlightTokens(masked: string): string {
 //
 // 所以把「被擋下來的候選」也列出來並說明理由。這反而是最有說服力的一段：
 // 其他工具不驗檢核碼，任何「1 英文 + 9 數字」都會被當成身分證；我們會驗，
-// 所以不誤報——代價就是你得用真的通得過檢核碼的號碼才看得到效果。
+// 所以能排除這類誤報——代價就是你得用真的通得過檢核碼的號碼才看得到效果。
 // ────────────────────────────────────────────────────────────
 interface Reject {
   cand: string;
@@ -223,7 +250,7 @@ function explainMisses(text: string, spans: Span[]): Reject[] {
     push(
       '人名 / 地址 / 公司名',
       '要靠<b>語意層（L2）的 NER 模型</b>才認得出來，這個網頁只跑規則層。' +
-        '完整版有做，見下方「完整系統還能做什麼」的第 ② 個分頁',
+        '完整版有做，見下方「怎麼運作」的「語意層」分頁',
       'info',
     );
   }
@@ -238,10 +265,13 @@ function renderRejects(items: Reject[], detectedCount: number): void {
     box.hidden = true;
     return;
   }
+  const rejected = items.some((item) => item.kind === 'reject');
   const title =
     detectedCount === 0
-      ? '這段文字沒有偵測到個資 —— 原因在這裡'
-      : '另外有幾個「看起來像、但被擋下來」的字串';
+      ? '這段文字沒有偵測到個資，原因如下'
+      : rejected
+        ? '另外有幾個看起來像、但被擋下來的字串'
+        : '這一頁抓不到的部分';
 
   box.innerHTML =
     `<h5>${title}</h5><ul>` +
@@ -253,11 +283,12 @@ function renderRejects(items: Reject[], detectedCount: number): void {
           `<span class="why">${item.why}</span></li>`,
       )
       .join('') +
-    '</ul><p class="punch"><b>這正是本作品與其他工具的差別。</b>' +
-    'Presidio、GLiNER、LLM Guard 都<b>沒有驗證檢核碼</b> —— ' +
-    '任何「1 英文字母 + 9 位數字」的字串都會被它們當成身分證，造成大量誤報。' +
-    '我們會驗，所以不誤報；代價是<b>你得用真的通得過檢核碼的號碼</b>才看得到效果' +
-    '（上面三個範例都是，可以直接點來看）。</p>';
+    '</ul>' +
+    // 只有真的擋下候選時才講這一段；單純的語意層提示不需要它。
+    (rejected
+      ? '<p class="fine">其他工具不驗檢核碼，任何「1 英文字母 + 9 位數字」都會被當成身分證。' +
+        '我們會驗，所以能排除格式像但不合法的號碼；想看到效果得用通得過檢核碼的公開測試值，上面的範例都是。</p>'
+      : '');
   box.hidden = false;
 }
 
@@ -283,24 +314,24 @@ function run(): void {
   const text = input.value;
 
   if (!text.trim()) {
-    outOrig.innerHTML = '<span style="color:var(--muted)">（還沒有輸入文字）</span>';
-    outMasked.innerHTML = '<span style="color:var(--muted)">（還沒有輸入文字）</span>';
-    outRestored.innerHTML = '<span style="color:var(--muted)">（還沒有還原）</span>';
-    detailTable.hidden = true;
-    detailEmpty.hidden = false;
+    outMasked.innerHTML = muted('還沒有輸入文字');
+    detail.hidden = true;
+    renderRisk(null);
     renderRejects([], 0);
     reply.value = '';
     mapping = new Map();
     $('s-count').textContent = '0';
     $('s-types').textContent = '0';
     $('s-time').textContent = '0';
+    restore();
     return;
   }
 
   // 真的量一次時間。數字會因機器而異，但那正是重點：這是你這台電腦的實測值。
   const started = performance.now();
-  const spans = detectAll(text).spans;
+  const detection = detectAll(text);
   const elapsed = performance.now() - started;
+  const spans = detection.spans;
 
   // 每次重跑都用全新的配號器：這個頁面一次只展示一段文字，
   // 沿用舊的會讓號碼從上一次的尾巴接下去，看起來莫名其妙。
@@ -308,8 +339,8 @@ function run(): void {
 
   mapping = new Map(result.mapping.map((m) => [m.placeholder, m.original]));
 
-  outOrig.innerHTML = highlight(text, spans);
-  outMasked.innerHTML = highlightTokens(result.maskedText);
+  outMasked.innerHTML = highlightTokens(result.maskedText, mapping);
+  renderRisk(detection.combination_risk ?? null);
   renderRejects(explainMisses(text, spans), result.mapping.length);
 
   $('s-count').textContent = String(result.mapping.length);
@@ -324,30 +355,25 @@ function run(): void {
     const risk = riskLevel(span.type);
     const token = tokenOf.get(span.text + '\t' + span.type) ?? '';
     tr.innerHTML =
-      `<td><b>${escapeHtml(typeLabel(span.type))}</b><br>` +
-      `<span style="color:var(--muted);font-size:12px" class="mono">${escapeHtml(span.type)}</span></td>` +
+      `<td><b>${escapeHtml(typeLabel(span.type))}</b>` +
+      `<small class="mono">${escapeHtml(span.type)}</small></td>` +
       `<td class="mono">${escapeHtml(span.text)}</td>` +
       `<td class="mono"><span class="tok">${escapeHtml(token)}</span></td>` +
       `<td><span class="pill ${risk}">${risk === 'high' ? '高' : risk === 'medium' ? '中' : '低'}</span></td>` +
       `<td class="mono">${span.start}–${span.end}</td>` +
       `<td>${span.source === 'rule' ? '規則層 · 檢核碼/格式' : '語意層 · 模型'}` +
-      `<br><span style="color:var(--muted);font-size:12px">信心 ${span.confidence.toFixed(2)}</span></td>`;
+      `<small>信心 ${span.confidence.toFixed(2)}</small></td>`;
     detailBody.appendChild(tr);
   }
-  const has = spans.length > 0;
-  detailTable.hidden = !has;
-  detailEmpty.hidden = has;
-  if (!has) {
-    detailEmpty.textContent = '這段文字裡沒有偵測到個資。';
-  }
+  detail.hidden = spans.length === 0;
+  $('detail-count').textContent = String(spans.length);
 
   reply.value = buildFakeReply();
-  outRestored.innerHTML =
-    '<span style="color:var(--muted)">（按上面的「還原」按鈕）</span>';
+  restore();
 }
 
 /**
- * 還原：把佔位符換回真值。
+ * 還原：把佔位符換回真值。回覆內容一變就重算，不需要另外按按鈕。
  *
  * 查不到的佔位符**原樣保留、絕不猜測**（docs/B_design.md 決定 5）——
  * 雲端 AI 可能自己編出沒發過的佔位符，猜測等同於憑空捏造一筆個資
@@ -356,12 +382,15 @@ function run(): void {
 function restore(): void {
   const text = reply.value;
   if (!text.trim()) {
-    outRestored.innerHTML = '<span style="color:var(--muted)">（上面沒有內容可以還原）</span>';
+    outRestored.innerHTML = muted(
+      mapping.size === 0 ? '沒有佔位符需要還原' : '左邊沒有內容可以還原',
+    );
+    restoreNote.textContent = '';
     return;
   }
   let restored = 0;
   let unknown = 0;
-  const html = escapeHtml(text).replace(/\[[A-Z][A-Z_]*_\d+\]/g, (token) => {
+  outRestored.innerHTML = escapeHtml(text).replace(/\[[A-Z][A-Z_]*_\d+\]/g, (token) => {
     const value = mapping.get(token);
     if (value === undefined) {
       unknown += 1;
@@ -370,26 +399,20 @@ function restore(): void {
     restored += 1;
     return `<mark class="r-low" title="由 ${token} 還原">${escapeHtml(value)}</mark>`;
   });
-  const note =
-    `<div style="color:var(--muted);font-size:12.5px;margin-bottom:10px;font-family:system-ui">` +
-    `還原 ${restored} 筆` +
-    (unknown > 0 ? ` ／ <b style="color:var(--high)">${unknown} 筆查不到，原樣保留</b>` : '') +
-    `</div>`;
-  outRestored.innerHTML = note + html;
+  restoreNote.innerHTML =
+    `還原 <b>${restored}</b> 筆` +
+    (unknown > 0 ? ` · <span class="no">${unknown} 筆查不到，原樣保留</span>` : '');
 }
 
 // ── 事件綁定 ──
 input.addEventListener('input', run);
-$('btn-restore').addEventListener('click', restore);
+reply.addEventListener('input', restore);
 
 document.querySelectorAll<HTMLButtonElement>('.chip[data-sample]').forEach((button) => {
   button.addEventListener('click', () => {
     const key = button.dataset.sample ?? '';
     input.value = key === 'clear' ? '' : (SAMPLES[key] ?? '');
     run();
-    if (key !== 'clear') {
-      input.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    }
   });
 });
 
@@ -444,15 +467,19 @@ async function runExtensionFlow(): Promise<void> {
   const text = chatInput.value;
   if (!text.trim()) return;
 
-  const spans = detectAll(text).spans;
+  const { spans, combination_risk } = detectAll(text);
 
-  // 沒偵測到東西就完全不打擾使用者 —— 這是擴充能被長期留著的前提。
-  if (spans.length === 0) {
+  const risk = combination_risk ?? null;
+
+  // 沒偵測到東西、也沒有組合風險，就完全不打擾使用者 —— 這是擴充能被長期留著的前提。
+  // 條件刻意包含組合風險，與 content/index.ts 一致：只有準識別子的文字一個 span
+  // 都抓不到，若只看 spans 就放行，等於告訴使用者「沒問題」。
+  if (spans.length === 0 && !risk) {
     showExtResult(
       'cancel',
       '面板沒有跳出來',
       null,
-      '這段文字沒有偵測到任何個資，擴充直接把原文貼上、不打擾你。' +
+      '這段文字沒有偵測到任何個資，也沒有組合風險，擴充直接把原文貼上、不打擾你。' +
         '<b>不該跳的時候不跳</b>，跟該跳的時候要跳一樣重要。',
     );
     return;
@@ -465,7 +492,7 @@ async function runExtensionFlow(): Promise<void> {
   btnExt.disabled = true;
   let decision;
   try {
-    decision = await showPanel(spans, previewPlaceholders);
+    decision = await showPanel(spans, previewPlaceholders, risk);
   } finally {
     btnExt.disabled = false;
   }
@@ -486,7 +513,7 @@ async function runExtensionFlow(): Promise<void> {
       'raw',
       '你選了「直接貼上原文」—— 個資會原封不動送進雲端',
       text,
-      '⚠️ 擴充不會攔住你 —— <b>使用者有最終決定權</b>，這是刻意的。' +
+      '擴充不會攔住你 —— <b>使用者有最終決定權</b>，這是刻意的。' +
         '但上面這些內容會原文進入雲端模型的上下文。',
     );
     return;
@@ -495,14 +522,18 @@ async function runExtensionFlow(): Promise<void> {
   const allocator = new PlaceholderAllocator();
   const { maskedText, mapping } = maskText(text, decision.spans, allocator);
   chatInput.value = maskedText;
-  if (chatHint) chatHint.textContent = '↑ 輸入框裡的內容已被替換';
+  if (chatHint) chatHint.textContent = '輸入框裡的內容已被替換';
 
   const skipped = spans.length - decision.spans.length;
   showExtResult(
     'good',
-    `已遮蔽 ${mapping.length} 筆後貼進輸入框`,
+    mapping.length > 0
+      ? `已遮蔽 ${mapping.length} 筆後貼進輸入框`
+      : '沒有需要遮蔽的項目，原文貼進輸入框',
     maskedText,
-    `這就是雲端 AI 會看到的內容。對照表（${mapping.length} 筆）只存在你的瀏覽器裡，絕不外傳。` +
+    (mapping.length > 0
+      ? `這就是雲端 AI 會看到的內容。對照表（${mapping.length} 筆）只存在你的瀏覽器裡，絕不外傳。`
+      : '面板只提示了組合風險；要不要先改寫再送出，由你決定。') +
       (skipped > 0
         ? ` <b>你取消勾選了 ${skipped} 項</b>，那些維持原文送出。`
         : ''),
@@ -512,7 +543,7 @@ async function runExtensionFlow(): Promise<void> {
 btnExt?.addEventListener('click', () => void runExtensionFlow());
 
 // ════════════════════════════════════════════════════════════
-// 「完整系統還能做什麼」：三個預錄重現的分頁
+// 「怎麼運作」的三個分頁：擴充（可操作）、Proxy 與語意層（實錄）
 // ════════════════════════════════════════════════════════════
 
 const tabs = Array.from(document.querySelectorAll<HTMLButtonElement>('.tab[data-tab]'));
@@ -662,31 +693,15 @@ async function playTerminal(): Promise<void> {
   playing = false;
   if (btnPlay) {
     btnPlay.disabled = false;
-    btnPlay.textContent = '↻ 重播';
+    btnPlay.textContent = '重播';
   }
   if (playHint) playHint.textContent = '這是 2026-08-22 的真實執行紀錄';
 }
 
 btnPlay?.addEventListener('click', () => void playTerminal());
 
-// 第一次捲到 Proxy 那一段時自動播放，不用使用者自己發現有按鈕。
-if (term && 'IntersectionObserver' in window) {
-  const observer = new IntersectionObserver(
-    (entries) => {
-      for (const entry of entries) {
-        if (entry.isIntersecting && !hasPlayed) {
-          void playTerminal();
-          observer.disconnect();
-        }
-      }
-    },
-    { threshold: 0.35 },
-  );
-  observer.observe(term);
-}
-
 // 還沒播放前先放一段提示，不要是一塊空白的黑色方塊。
 if (term) {
   term.innerHTML =
-    '<span class="note">（捲到這裡會自動播放，或按上面的按鈕）</span>';
+    '<span class="note">（按上面的按鈕播放）</span>';
 }
