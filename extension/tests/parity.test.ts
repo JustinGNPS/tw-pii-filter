@@ -30,7 +30,7 @@ describe('Python ↔ TypeScript 規則層一致性', () => {
   it.each(cases.map((text, i) => [i, text] as const))(
     'case %i 的偵測結果與 Python 版完全一致',
     (index, text) => {
-      const actual = detectAll(text);
+      const actual = detectAll(text, undefined, new Date(2026, 9, 8));
       expect(actual).toEqual(expected[index] as unknown as DetectionResult);
     },
   );

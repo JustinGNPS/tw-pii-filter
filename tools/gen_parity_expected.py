@@ -13,6 +13,7 @@ Python 版邏輯有任何變更時，都要重跑本腳本並把更新後的
 """
 
 import json
+from datetime import date
 import sys
 from pathlib import Path
 
@@ -43,7 +44,7 @@ def main() -> None:
     with open(CASES_PATH, encoding="utf-8") as f:
         cases = json.load(f)
 
-    expected = [detect_all(case) for case in cases]
+    expected = [detect_all(case, today=date(2026, 10, 8)) for case in cases]
     _dump(EXPECTED_PATH, expected)
 
     total_spans = sum(len(result["spans"]) for result in expected)

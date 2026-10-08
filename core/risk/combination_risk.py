@@ -158,8 +158,8 @@ def _has_gender(text: str) -> bool:
 # 給計算過的區間建議。
 # ---------------------------------------------------------------------------
 
-def _age_generalization_suggestion(text: str) -> Optional[str]:
-    age = _extract_age(text)
+def _age_generalization_suggestion(text: str, today: Optional[date] = None) -> Optional[str]:
+    age = _extract_age(text, today)
     if age is None:
         return "文字中的年齡資訊建議泛化為 5 歲一個區間（例如「32歲」→「30-35歲」）"
     bucket_start = (age // 5) * 5
@@ -178,11 +178,11 @@ _GENERIC_SUGGESTIONS = {
 }
 
 
-def _build_suggestions(text: str, contributing_types: List[str]) -> List[str]:
+def _build_suggestions(text: str, contributing_types: List[str], today: Optional[date] = None) -> List[str]:
     suggestions = []
     for t in contributing_types:
         if t == "AGE":
-            suggestions.append(_age_generalization_suggestion(text))
+            suggestions.append(_age_generalization_suggestion(text, today))
         else:
             suggestion = _GENERIC_SUGGESTIONS.get(t)
             if suggestion:
@@ -204,7 +204,7 @@ def is_warning_worthy(risk: Dict) -> bool:
     return risk.get("score", 0.0) >= WARNING_THRESHOLD
 
 
-def compute_combination_risk(text: str, spans: Optional[List[Dict]] = None) -> Dict:
+def compute_combination_risk(text: str, spans: Optional[List[Dict]] = None, today: Optional[date] = None) -> Dict:
     """
     計算一份文字的組合風險分數。
 
@@ -263,7 +263,7 @@ def compute_combination_risk(text: str, spans: Optional[List[Dict]] = None) -> D
         "score": round(score, 3),
         "contributing_types": contributing_sorted,
         "risk_level": _risk_level(score),
-        "suggestions": _build_suggestions(text, contributing_sorted) if score > 0 else [],
+        "suggestions": _build_suggestions(text, contributing_sorted, today) if score > 0 else [],
     }
 
 
