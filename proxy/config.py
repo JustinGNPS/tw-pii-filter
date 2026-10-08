@@ -9,7 +9,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from proxy.mapping import DEFAULT_IDLE_TIMEOUT, normalize_type
+from core.redact.mapping import DEFAULT_IDLE_TIMEOUT, normalize_type
 
 # repo 根目錄的 .env（proxy/config.py -> proxy/ -> repo 根）
 _REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -155,7 +155,7 @@ NER_ALLOW_TYPES = _parse_types(
 #
 # 對照表是明文個資，不該無限期駐留 —— 見 docs/B_design.md 決定 11。閒置超過
 # 這段時間，下一次遮蔽動作前會整張清空重來（不影響正在進行中的還原，見
-# `proxy/mapping.py::MappingTable` 的說明）。
+# `core/redact/mapping.py::MappingTable` 的說明）。
 #
 # 設定方式：`.env` 或環境變數 `PROXY_MAPPING_IDLE_TIMEOUT`（秒）。設成 `0`
 # 代表停用（僅供除錯／demo 時觀察數字持續累積用，正式使用不建議關閉）。

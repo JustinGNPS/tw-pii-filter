@@ -11,7 +11,7 @@
   文字 block、`system` 欄位、`tool_use.input`（任意深度巢狀 JSON 裡的每個
   字串葉節點）、`tool_result.content`（字串或文字 block 陣列）——遮蔽時直接
   對 Anthropic 格式的 payload 呼叫既有的 `proxy.masker.mask_payload()`。
-- 還原沿用既有的 `proxy.restorer.restore_body()`，在 AIR 回覆的原始 JSON
+- 還原沿用既有的 `core.redact.restorer.restore_body()`，在 AIR 回覆的原始 JSON
   位元組上做文字取代，不需要為 Anthropic 格式另外寫還原邏輯（第 5 步
   「驗證非串流還原不用改」，這次連工具呼叫的參數也一併驗證到）。
 
@@ -22,7 +22,7 @@
 Claude Code 每次請求都會重送整段對話歷史，因此下一輪請求裡，這個歷史
 assistant 訊息會**帶著真值**再度出現在 payload 裡，若不重新遮蔽就直接
 轉送給 AIR，等於真值又外洩了一次——跟 OpenAI 格式的 `tool_calls[].function.arguments`
-是同一類風險（`proxy/restorer.py` 的 `SSERestorer` docstring 記錄過
+是同一類風險（`core/redact/restorer.py` 的 `SSERestorer` docstring 記錄過
 OpenCode 曾經因為這條路徑沒被處理而把佔位符寫進使用者檔案；這裡是反過來
 的風險：真值沒被重新遮蔽而送出去）。
 """

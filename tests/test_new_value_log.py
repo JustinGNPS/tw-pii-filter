@@ -25,7 +25,7 @@ import respx
 from fastapi.testclient import TestClient
 
 from proxy import config, main, masker
-from proxy.mapping import MappingTable
+from core.redact.mapping import MappingTable
 
 UPSTREAM = "https://upstream.test/v1"
 

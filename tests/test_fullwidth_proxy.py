@@ -18,8 +18,8 @@ import json
 
 from core.rules import detect_all
 from proxy import masker
-from proxy.mapping import MappingTable
-from proxy.restorer import restore_text
+from core.redact.mapping import MappingTable
+from core.redact.restorer import restore_text
 
 # 全形與半形的同一張身分證。
 FULL_ID = "Ａ１２３４５６７８９"
