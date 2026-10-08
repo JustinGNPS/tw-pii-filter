@@ -60,6 +60,23 @@ def mask_text(
     return _mask_text(text, spans, table, resolve_skip_types(skip_types))
 
 
+def mask_with_residual(text, spans, table, skip_types=None):
+    """遮蔽並精確平移保留 spans；不以搜尋同值字串猜測位置。"""
+    skip = resolve_skip_types(skip_types)
+    masked = mask_text(text, spans, table, skip)
+    offset = 0
+    residual = []
+    for span in sorted(spans, key=lambda item: item["start"]):
+        pii_type = normalize_type(span["type"])
+        if pii_type in skip:
+            residual.append({**span, "type": pii_type,
+                             "start": span["start"] + offset, "end": span["end"] + offset})
+        else:
+            token = table.token_for(pii_type, span["text"])
+            offset += len(token) - (span["end"] - span["start"])
+    return masked, residual
+
+
 def mask_payload(
     payload: dict,
     table: MappingTable,
@@ -131,7 +148,7 @@ def mask_payload_with_risk(
     for result in detector.scan_payload(payload, cache):
         # 先記下「偵測到、但不會被遮掉」的 spans。這是組合風險真正要看的東西：
         # 被遮掉的型別對重新識別已經沒有貢獻了（理由見 proxy/risk.py）。
-        residual = risk.residual_spans(result["spans"], skip)
+        masked, residual = mask_with_residual(result["text"], result["spans"], table, skip)
         if residual:
             residual_by_path[result["path"]] = residual
 
@@ -139,7 +156,7 @@ def mask_payload_with_risk(
         if not spans:
             continue  # 這個欄位偵測到的全被跳過，原樣保留
         detector.set_at(
-            payload, result["path"], mask_text(result["text"], spans, table, skip)
+            payload, result["path"], masked
         )
         for span in spans:
             pii_type = normalize_type(span["type"])
@@ -172,11 +189,10 @@ def _locate_surviving_spans(
 ) -> list[dict]:
     """在已遮蔽文字裡重新定位仍保留的 NER span。
 
-    直接識別子換成佔位符後字串長度會改變，所以不能沿用原始 start/end；但
-    SKIP_TYPES 的真值仍原樣存在，依原始出現順序搜尋即可取得安全的新座標。
+    直接識別子換成佔位符後字串長度會改變，呼叫端必須先用 mask_with_residual
+    取得新座標。此處驗證原文一致，不搜尋同值文字，以免遮錯另一個出現位置。
     """
     located: list[dict] = []
-    cursor = 0
     for span in sorted(spans, key=lambda item: item.get("start", 0)):
         pii_type = normalize_type(span.get("type", ""))
         if pii_type not in selected_types or pii_type in reduction.TEXT_GENERALIZATION_TYPES:
@@ -184,14 +200,10 @@ def _locate_surviving_spans(
         value = span.get("text") or ""
         if not value:
             continue
-        start = text.find(value, cursor)
-        if start < 0:
-            start = text.find(value)
-        if start < 0:
-            continue
-        end = start + len(value)
+        start, end = span["start"], span["end"]
+        if text[start:end] != value:
+            raise ValueError("殘餘 span 必須使用遮蔽後文字的座標")
         located.append({**span, "type": pii_type, "start": start, "end": end})
-        cursor = end
     return located
 
 

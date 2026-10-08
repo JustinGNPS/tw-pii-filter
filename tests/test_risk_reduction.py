@@ -77,3 +77,34 @@ def test_age_gender_泛化後不再被精確準識別子規則命中():
 def test_unknown_policy_明確拒絕而非悄悄降低保護():
     with pytest.raises(ValueError, match="未知的風險降階策略"):
         reduction.normalize_policy("mystery")
+
+
+def test_fullwidth_age_reduction_preserves_other_original_characters():
+    from core.redact.mapping import MappingTable
+    from proxy.masker import reduce_residual_text
+
+    text = "代碼ＡＢＣ：３５歲女性"
+    reduced, _, final, plan, _ = reduce_residual_text(text, [], MappingTable(), "strict")
+    assert reduced == "代碼ＡＢＣ：成年年齡層人士"
+    assert final["contributing_types"] == []
+    assert plan["met_target"]
+
+
+def test_reduction_masks_actual_span_not_an_earlier_identical_word():
+    from core.redact.mapping import MappingTable
+    from core.redact.restorer import restore_text
+    from proxy.masker import mask_with_residual, reduce_residual_text
+
+    text = "提到工程師；A123456789 的職稱是工程師"
+    start = text.rindex("工程師")
+    id_start = text.index("A123456789")
+    spans = [
+        {"type": "TW_ID", "text": "A123456789", "start": id_start, "end": id_start + 10},
+        {"type": "POSITION", "text": "工程師", "start": start, "end": start + 3},
+    ]
+    table = MappingTable()
+    masked, residual = mask_with_residual(text, spans, table, {"POSITION"})
+    reduced, _, _, _, counts = reduce_residual_text(masked, residual, table, "strict")
+    assert reduced == "提到工程師；[TW_ID_1] 的職稱是[POSITION_1]"
+    assert counts == {"POSITION": 1}
+    assert restore_text(reduced, table)[0] == text

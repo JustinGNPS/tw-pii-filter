@@ -150,7 +150,13 @@ def _age_group(age: int | None) -> str:
 
 
 def _replace_pattern(text: str, pattern: re.Pattern, replacement) -> tuple[str, int]:
-    return pattern.subn(replacement, text)
+    from core.rules.normalize import normalize_fullwidth
+
+    matches = list(pattern.finditer(normalize_fullwidth(text)))
+    for match in reversed(matches):
+        value = replacement(match) if callable(replacement) else replacement
+        text = text[:match.start()] + value + text[match.end():]
+    return text, len(matches)
 
 
 def generalize_text_types(text: str, selected_types: Iterable[str]) -> tuple[str, list[dict]]:

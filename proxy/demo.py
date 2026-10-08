@@ -91,9 +91,8 @@ async def scan(payload: dict) -> dict:
     detect_ms = (time.perf_counter() - started) * 1000
 
     started = time.perf_counter()
-    direct_masked = masker.mask_text(text, spans, DEMO_TABLE, skip)
+    direct_masked, residual = masker.mask_with_residual(text, spans, DEMO_TABLE, skip)
     original_risk = risk.assess(text, spans) if text.strip() else None
-    residual = risk.residual_spans(spans, skip)
     masked, _, risk_result, reduction_plan, _ = masker.reduce_residual_text(
         direct_masked,
         residual,
