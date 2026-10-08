@@ -1,0 +1,332 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>本地端敏感資訊過濾機制 — 線上展示</title>
+<meta name="description" content="讓 AI 看不到你的個資，但仍然能幫你做事。台灣身分證、統一編號、健保卡號的檢核碼驗證，全程在你的瀏覽器裡執行。">
+<style>
+:root{
+  --bg:#f7f8fa; --panel:#fff; --ink:#15181d; --muted:#5d6672; --line:#e3e6ec;
+  --accent:#2f6df6; --accent-soft:#eaf0ff;
+  --high:#d92b4b; --high-bg:#fdeaee;
+  --mid:#c2680a; --mid-bg:#fdf2e3;
+  --low:#2f7a55; --low-bg:#e8f5ee;
+  --code:#f2f4f8;
+}
+@media (prefers-color-scheme:dark){
+  :root{
+    --bg:#101317; --panel:#171b21; --ink:#e8eaee; --muted:#9aa3b0; --line:#282e37;
+    --accent:#6b9bff; --accent-soft:#1d2738;
+    --high:#ff8099; --high-bg:#36202a;
+    --mid:#ecab5c; --mid-bg:#352a1c;
+    --low:#6fcf9d; --low-bg:#1c2f26;
+    --code:#1d222a;
+  }
+}
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--bg); color:var(--ink);
+  font-family:"Noto Sans TC","PingFang TC","Microsoft JhengHei",system-ui,-apple-system,sans-serif;
+  line-height:1.7; -webkit-font-smoothing:antialiased;
+}
+.wrap{max-width:1080px; margin:0 auto; padding:0 20px}
+code,kbd,pre,.mono{font-family:ui-monospace,"Cascadia Code","Consolas","Noto Sans Mono",monospace}
+
+/* ── header ── */
+header{padding:56px 0 40px; border-bottom:1px solid var(--line); background:var(--panel)}
+h1{margin:0 0 10px; font-size:clamp(26px,4vw,38px); letter-spacing:-.02em; line-height:1.3}
+.tagline{margin:0 0 22px; font-size:clamp(15px,2vw,19px); color:var(--muted)}
+.links{display:flex; gap:10px; flex-wrap:wrap}
+.links a{
+  display:inline-block; padding:7px 15px; border-radius:7px; text-decoration:none;
+  font-size:14px; border:1px solid var(--line); color:var(--ink); background:var(--bg);
+}
+.links a.primary{background:var(--accent); border-color:var(--accent); color:#fff}
+.links a:hover{border-color:var(--accent)}
+
+/* ── sections ── */
+section{padding:44px 0; border-bottom:1px solid var(--line)}
+h2{margin:0 0 6px; font-size:23px; letter-spacing:-.01em}
+h3{margin:28px 0 10px; font-size:16px}
+.sub{margin:0 0 24px; color:var(--muted); font-size:15px}
+
+.notice{
+  margin:0 0 24px; padding:13px 16px; border-radius:8px; font-size:14px;
+  background:var(--accent-soft); border:1px solid color-mix(in srgb,var(--accent) 30%,transparent);
+}
+.notice strong{color:var(--accent)}
+
+/* ── demo ── */
+.chips{display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px}
+.chip{
+  padding:6px 13px; border-radius:999px; border:1px solid var(--line);
+  background:var(--panel); color:var(--ink); font-size:13px; cursor:pointer; font-family:inherit;
+}
+.chip:hover{border-color:var(--accent); color:var(--accent)}
+textarea{
+  width:100%; min-height:150px; padding:14px; border-radius:9px; resize:vertical;
+  border:1px solid var(--line); background:var(--panel); color:var(--ink);
+  font-size:14px; line-height:1.75; font-family:ui-monospace,"Consolas",monospace;
+}
+textarea:focus{outline:2px solid var(--accent); outline-offset:-1px; border-color:transparent}
+
+.stats{display:flex; gap:22px; flex-wrap:wrap; margin:16px 0; font-size:14px}
+.stat b{font-size:21px; font-variant-numeric:tabular-nums; color:var(--accent); margin-right:5px}
+.stat span{color:var(--muted)}
+
+.cols{display:grid; grid-template-columns:1fr 1fr; gap:16px}
+@media (max-width:760px){.cols{grid-template-columns:1fr}}
+.card{background:var(--panel); border:1px solid var(--line); border-radius:9px; overflow:hidden}
+.card>h4{
+  margin:0; padding:10px 14px; font-size:13px; font-weight:600;
+  border-bottom:1px solid var(--line); color:var(--muted);
+}
+.card .body{
+  padding:14px; font-size:13.5px; line-height:1.8; white-space:pre-wrap; word-break:break-word;
+  font-family:ui-monospace,"Consolas",monospace; min-height:120px; max-height:340px; overflow:auto;
+}
+mark{padding:1px 3px; border-radius:4px; font-weight:600; background:var(--high-bg); color:var(--high)}
+mark.r-medium{background:var(--mid-bg); color:var(--mid)}
+mark.r-low{background:var(--low-bg); color:var(--low)}
+.tok{
+  padding:1px 5px; border-radius:4px; font-weight:600;
+  background:var(--accent-soft); color:var(--accent);
+}
+
+table{width:100%; border-collapse:collapse; font-size:13.5px; margin-top:8px}
+th,td{padding:8px 11px; text-align:left; border-bottom:1px solid var(--line); vertical-align:top}
+th{color:var(--muted); font-weight:600; font-size:12.5px; white-space:nowrap}
+td.mono{font-family:ui-monospace,"Consolas",monospace; word-break:break-all}
+.tablewrap{overflow-x:auto; background:var(--panel); border:1px solid var(--line); border-radius:9px; padding:4px 10px 10px}
+.pill{display:inline-block; padding:1px 8px; border-radius:999px; font-size:11.5px; font-weight:600}
+.pill.high{background:var(--high-bg); color:var(--high)}
+.pill.medium{background:var(--mid-bg); color:var(--mid)}
+.pill.low{background:var(--low-bg); color:var(--low)}
+.empty{color:var(--muted); font-size:14px; padding:18px 0}
+
+button.go{
+  padding:9px 18px; border-radius:8px; border:none; cursor:pointer;
+  background:var(--accent); color:#fff; font-size:14px; font-family:inherit; font-weight:600;
+}
+button.go:hover{filter:brightness(1.08)}
+
+.flow{
+  display:grid; grid-template-columns:repeat(4,1fr); gap:10px; margin:22px 0 6px; font-size:13px;
+}
+@media (max-width:760px){.flow{grid-template-columns:1fr 1fr}}
+.flow div{
+  background:var(--panel); border:1px solid var(--line); border-radius:9px; padding:13px;
+}
+.flow b{display:block; font-size:12px; color:var(--accent); margin-bottom:4px}
+
+ul.tight{margin:8px 0; padding-left:20px}
+ul.tight li{margin:5px 0; font-size:14.5px}
+.ok{color:var(--low); font-weight:700}
+.no{color:var(--high); font-weight:700}
+footer{padding:36px 0 60px; color:var(--muted); font-size:13.5px}
+footer a{color:var(--accent)}
+.fine{font-size:13px; color:var(--muted); margin-top:10px}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <h1>本地端敏感資訊過濾機制</h1>
+    <p class="tagline">讓 AI 看不到你的個資，但仍然能幫你做事。</p>
+    <div class="links">
+      <a class="primary" href="#demo">▶ 立即試用</a>
+      <a href="https://github.com/JustinGNPS/tw-pii-filter" target="_blank" rel="noopener">GitHub 原始碼</a>
+    </div>
+  </div>
+</header>
+
+<section id="why">
+  <div class="wrap">
+    <h2>為什麼需要這個</h2>
+    <p class="sub">現有隱私防護工具對台灣個資幾乎無法偵測 —— 這是我們實測出來的數字，不是推論。</p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>偵測類別</th><th>Presidio</th><th>GLiNER</th><th>LLM Guard</th><th>本作品</th></tr></thead>
+        <tbody>
+          <tr><td>人名</td><td>0.447</td><td>0.100</td><td>1.000</td><td>語意層 0.976</td></tr>
+          <tr><td>地址</td><td>0.000</td><td>0.202</td><td>1.000</td><td>語意層支援</td></tr>
+          <tr><td><b>身分證字號</b></td><td class="no">0.000</td><td>0.176</td><td class="no">0.000</td><td class="ok">檢核碼驗證</td></tr>
+          <tr><td><b>統一編號</b></td><td class="no">0.000</td><td class="no">0.000</td><td class="no">0.000</td><td class="ok">檢核碼驗證</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="fine">
+      數值為 recall（召回率）。測試語料為 300 筆合成台灣個資，涵蓋醫療對話、履歷、客服記錄三種情境，
+      全數為假資料；每個身分證與統編各生成「檢核碼正確」與「錯誤」兩版。固定 random seed、鎖定套件版本。
+      <br><b>關鍵解讀：</b>LLM Guard 在人名與地址上達到滿分 1.000，同一次執行卻在身分證上掛零 ——
+      不是中文能力不足，是設計裡從來沒有台灣。而且<b>沒有任何一個現有工具驗證檢核碼</b>。
+    </p>
+  </div>
+</section>
+
+<section id="demo">
+  <div class="wrap">
+    <h2>線上試用</h2>
+    <p class="sub">貼一段文字進去，看它在送給 AI 之前會變成什麼樣子。</p>
+
+    <div class="notice">
+      🔒 <strong>全部在你的瀏覽器裡執行。</strong>
+      這個頁面沒有後端、不發送任何網路請求，你貼進去的內容不會離開這台電腦 ——
+      這正是本作品的核心主張，所以展示頁自己也必須做到。
+    </div>
+
+    <div class="chips">
+      <span style="font-size:13px;color:var(--muted);align-self:center;margin-right:4px">試試看：</span>
+      <button class="chip" data-sample="service">客服通話紀錄</button>
+      <button class="chip" data-sample="resume">求職履歷</button>
+      <button class="chip" data-sample="code">程式設定檔</button>
+      <button class="chip" data-sample="clear">清空</button>
+    </div>
+
+    <textarea id="input" placeholder="在這裡貼上任何文字⋯⋯（或點上面的範例）"></textarea>
+
+    <div class="stats">
+      <span class="stat"><b id="s-count">0</b><span>筆個資（不重複值）</span></span>
+      <span class="stat"><b id="s-types">0</b><span>種類別</span></span>
+      <span class="stat"><b id="s-time">0</b><span>ms 偵測耗時</span></span>
+    </div>
+
+    <div class="cols">
+      <div class="card">
+        <h4>① 你輸入的原文（偵測到的已標示）</h4>
+        <div class="body" id="out-orig"></div>
+      </div>
+      <div class="card">
+        <h4>② 遮蔽後 —— 這才是雲端 AI 看得到的內容</h4>
+        <div class="body" id="out-masked"></div>
+      </div>
+    </div>
+
+    <h3>偵測明細</h3>
+    <div class="tablewrap" id="detail-wrap">
+      <div class="empty" id="detail-empty">還沒有輸入文字。</div>
+      <table id="detail-table" hidden>
+        <thead><tr><th>類別</th><th>原文</th><th>佔位符</th><th>風險</th><th>位置</th><th>判定依據</th></tr></thead>
+        <tbody id="detail-body"></tbody>
+      </table>
+    </div>
+
+    <h3>③ 回程：AI 回覆之後，把佔位符換回真值</h3>
+    <p class="sub" style="margin-bottom:12px">
+      下面模擬一段「雲端 AI 的回覆」—— 它只認得佔位符。
+      按下還原，就是使用者實際看到的內容。對照表只存在這個分頁的記憶體裡。
+    </p>
+    <textarea id="reply" style="min-height:110px" placeholder="模擬的 AI 回覆會出現在這裡⋯⋯"></textarea>
+    <div style="margin:12px 0"><button class="go" id="btn-restore">還原 →</button></div>
+    <div class="card">
+      <h4>④ 還原後 —— 使用者實際看到的內容</h4>
+      <div class="body" id="out-restored"></div>
+    </div>
+    <p class="fine">
+      查不到對應真值的佔位符一律<b>原樣保留、絕不猜測</b> ——
+      雲端 AI 可能自己編出沒發過的佔位符（幻覺），猜測等同於憑空捏造一筆個資塞進使用者的內容裡。
+      你可以在上面那段回覆裡亂打一個 <code>[TW_ID_9]</code> 試試看。
+    </p>
+  </div>
+</section>
+
+<section id="how">
+  <div class="wrap">
+    <h2>系統怎麼運作</h2>
+    <p class="sub">語言模型判斷「像不像」，檢核碼判斷「是不是」—— 個資防護兩者都需要。</p>
+
+    <div class="flow">
+      <div><b>L1 規則驗證層</b>身分證、統編、健保卡號的檢核碼演算法，確定性判定</div>
+      <div><b>L2 語意偵測層</b>本地 NER 小模型處理人名、地址、機構等上下文實體</div>
+      <div><b>L3 組合風險評分</b>偵測準識別子共現，估算再識別風險並提出警示</div>
+      <div><b>還原</b>AI 回覆時依固定格式把佔位符換回真值，使用者無感</div>
+    </div>
+
+    <h3>兩個載體，一個核心</h3>
+    <div class="cols">
+      <div class="card"><h4>瀏覽器擴充（面向一般使用者）</h4><div class="body" style="white-space:normal;font-family:inherit">
+        選取文字按右鍵「隱私處理後貼上」，貼進 ChatGPT 的已經是遮蔽後的內容。
+        側邊面板即時顯示偵測到什麼、風險多少。<b>TypeScript 實作。</b>
+      </div></div>
+      <div class="card"><h4>API Proxy（面向開發者）</h4><div class="body" style="white-space:normal;font-family:inherit">
+        攔在 AI coding agent 與雲端 LLM 之間。Agent 讀到 <code>.env</code> 或客戶名單時自動攔下，
+        回覆時自動還原，工作流程完全不變。<b>Python 實作。</b>
+      </div></div>
+    </div>
+
+    <h3>六款 AI Agent 實測通過 —— 以及我們誠實說攔不到的那一款</h3>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Agent</th><th>接入方式</th><th>編輯機制</th><th>狀態</th></tr></thead>
+        <tbody>
+          <tr><td>Aider</td><td class="mono">OPENAI_API_BASE</td><td>純文字回覆</td><td class="ok">✓ 實測通過</td></tr>
+          <tr><td>Cline</td><td>GUI 設定</td><td>function calling</td><td class="ok">✓ 實測通過</td></tr>
+          <tr><td>Continue</td><td class="mono">config.yaml</td><td>function calling</td><td class="ok">✓ 實測通過</td></tr>
+          <tr><td>OpenCode</td><td>自訂 provider</td><td>function calling</td><td class="ok">✓ 實測通過</td></tr>
+          <tr><td>Codex</td><td>Responses API</td><td>欄位結構完全不同</td><td class="ok">✓ 實測通過</td></tr>
+          <tr><td>Claude Code</td><td>Anthropic Messages API</td><td>另建協定翻譯層</td><td class="ok">✓ 實測通過</td></tr>
+          <tr><td><b>Cursor</b></td><td>廠商代管後端，無自訂位址欄位</td><td>—</td><td class="no">✗ 不支援</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="fine">
+      Cursor 走自家後端、不開放自訂 API 位址，<b>任何本地攔截方案都攔不到</b>，不是實作上的取捨。
+      我們把這個邊界寫進設計文件並說明原因，而不是避而不談。
+    </p>
+  </div>
+</section>
+
+<section id="numbers">
+  <div class="wrap">
+    <h2>工程完成度</h2>
+    <p class="sub">以下每個數字都可以在 repo 裡當場重現。</p>
+    <div class="cols" style="grid-template-columns:repeat(auto-fit,minmax(210px,1fr))">
+      <div class="card"><h4>自動化測試</h4><div class="body" style="white-space:normal;font-family:inherit">
+        <b style="font-size:26px;color:var(--accent)">477</b> 項全數通過<br>
+        <span style="color:var(--muted);font-size:13px">Python 415 ＋ 瀏覽器擴充 62，另有 108 項 subtest</span>
+      </div></div>
+      <div class="card"><h4>隱私防護的延遲成本</h4><div class="body" style="white-space:normal;font-family:inherit">
+        <b style="font-size:26px;color:var(--accent)">0.25%</b> 佔 LLM 往返<br>
+        <span style="color:var(--muted);font-size:13px">規則層約 5 ms，上游 LLM 本身 1,400–2,900 ms</span>
+      </div></div>
+      <div class="card"><h4>瀏覽器端處理速度</h4><div class="body" style="white-space:normal;font-family:inherit">
+        <b style="font-size:26px;color:var(--accent)">2.4</b> ms／2 萬字<br>
+        <span style="color:var(--muted);font-size:13px">2 千字僅 0.14 ms</span>
+      </div></div>
+      <div class="card"><h4>兩版一致性</h4><div class="body" style="white-space:normal;font-family:inherit">
+        <b style="font-size:26px;color:var(--accent)">32</b> 項比對測試<br>
+        <span style="color:var(--muted);font-size:13px">自動檢查 Python 版與 TypeScript 版是否講出不同的話</span>
+      </div></div>
+    </div>
+
+    <h3>我們知道自己的限制</h3>
+    <ul class="tight">
+      <li><b>關聯性洩漏（刻意取捨）</b>：「[NAME_1] 的電話是 [TW_PHONE_M_1]」這個<i>關聯</i>本身仍然保留。
+          要讓 AI 還能正常做事，就不能把結構也打碎。</li>
+      <li><b>組合風險只提示、不強制遮蔽</b>：由使用者判斷。過度遮蔽會讓 AI 無法作答。</li>
+      <li><b>計數是「不重複字面值」不是「不重複當事人」</b>：同一張身分證的全形與半形寫法會拿到兩個佔位符，
+          因為還原時必須知道原本是哪種寫法 —— 統一正規化等於偷改使用者原文。</li>
+      <li><b>這個展示頁只跑規則層（L1）</b>：語意層需要下載 NER 模型，不適合放在網頁裡。
+          人名、地址的偵測請用完整版。</li>
+    </ul>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <p>
+      <b>本地端敏感資訊過濾機制</b> ｜ 資訊安全專題 ｜
+      <a href="https://github.com/JustinGNPS/tw-pii-filter" target="_blank" rel="noopener">github.com/JustinGNPS/tw-pii-filter</a>
+    </p>
+    <p class="fine">
+      本頁所有範例資料皆為合成假資料（檢核碼刻意產生為有效，以便展示偵測效果），
+      不含、也不接受任何真實個資。本頁為純靜態網頁，不蒐集任何資料、沒有 cookie、沒有追蹤。
+    </p>
+  </div>
+</footer>
+
+<script>/*APP_JS*/</script>
+</body>
+</html>

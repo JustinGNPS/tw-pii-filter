@@ -1,0 +1,13 @@
+{
+  "name": "tw-pii-filter-site",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "靜態展示網站：在瀏覽器裡直接執行規則層偵測，不需要後端",
+  "scripts": {
+    "build": "node build.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "0.21.5"
+  }
+}
