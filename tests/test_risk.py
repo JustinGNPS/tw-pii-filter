@@ -284,6 +284,78 @@ def test_mask_payload_舊介面仍然只回傳筆數():
     assert masker.mask_payload(payload, MappingTable()) == {"TW_ID": 1}
 
 
+def test_balanced策略會泛化殘餘年齡性別(monkeypatch):
+    monkeypatch.setattr(config, "RISK_REDUCTION_POLICY", "balanced")
+    payload = {"messages": [{"role": "user", "content": RISKY_TEXT}]}
+    monkeypatch.setattr(
+        masker.detector,
+        "scan_payload",
+        lambda _payload, _cache=None: [
+            {
+                "path": ("messages", 0, "content"),
+                "text": RISKY_TEXT,
+                "spans": _spans_for_risky_text(),
+            }
+        ],
+    )
+
+    counts, assessment = masker.mask_payload_with_risk(payload, MappingTable())
+    sent = payload["messages"][0]["content"]
+
+    assert counts == {"ADDRESS": 1}
+    assert "成年年齡層" in sent
+    assert "人士" in sent
+    assert "資深後端工程師" in sent
+    assert assessment["score"] == 0.0
+
+
+def test_strict策略也會把公司與職稱換成可還原佔位符(monkeypatch):
+    monkeypatch.setattr(config, "RISK_REDUCTION_POLICY", "strict")
+    text = "35歲女性在測試公司擔任工程師"
+    spans = [
+        {"start": text.index("測試公司"), "end": text.index("測試公司") + 4,
+         "type": "COMPANY", "text": "測試公司"},
+        {"start": text.index("工程師"), "end": text.index("工程師") + 3,
+         "type": "POSITION", "text": "工程師"},
+    ]
+    payload = {"messages": [{"role": "user", "content": text}]}
+    monkeypatch.setattr(
+        masker.detector,
+        "scan_payload",
+        lambda _payload, _cache=None: [
+            {"path": ("messages", 0, "content"), "text": text, "spans": spans}
+        ],
+    )
+
+    counts, assessment = masker.mask_payload_with_risk(payload, MappingTable())
+    sent = payload["messages"][0]["content"]
+
+    assert counts == {"COMPANY": 1, "POSITION": 1}
+    assert "[COMPANY_1]" in sent
+    assert "[POSITION_1]" in sent
+    assert "成年年齡層" in sent and "人士" in sent
+    assert assessment["score"] == 0.0
+
+
+def test只有文字型準識別子被降階時_openai_body仍會更新(monkeypatch):
+    monkeypatch.setattr(config, "RISK_REDUCTION_POLICY", "balanced")
+    monkeypatch.setattr(main.masker.detector, "scan_payload", lambda *_args, **_kwargs: [])
+    body = json.dumps(
+        {"messages": [{"role": "user", "content": "這位35歲的女性想諮詢"}]},
+        ensure_ascii=False,
+    ).encode("utf-8")
+
+    masked_body, _ = main._mask_request(
+        "/v1/chat/completions", body, MappingTable()
+    )
+    sent = json.loads(masked_body)["messages"][0]["content"]
+
+    # AGE + GENDER 是 0.50；平衡策略只需移除優先順位較前的 GENDER 就已歸零，
+    # 因此精確年齡應保留，釘住「達標即停止」而不是過度處理。
+    assert "35歲" in sent
+    assert "人士" in sent
+
+
 # ---------------------------------------------------------------------------
 # 兩條遮蔽路徑都要印警示
 # ---------------------------------------------------------------------------

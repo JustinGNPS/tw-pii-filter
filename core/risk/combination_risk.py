@@ -270,6 +270,9 @@ def compute_combination_risk(text: str, spans: Optional[List[Dict]] = None, toda
             "population_estimate": {..}, # 選填；官方人口交叉統計的上限估計
         }
     """
+    from core.rules.normalize import normalize_fullwidth
+
+    text = normalize_fullwidth(text)
     contributing_types = set()
 
     if spans:

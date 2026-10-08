@@ -76,7 +76,7 @@
     background: var(--surface); color: var(--ink);
     border: 1px solid var(--line); border-radius: 6px; padding: .8rem .9rem;
   }
-  textarea:focus-visible, button:focus-visible { outline: 2px solid var(--seal); outline-offset: 2px; }
+  textarea:focus-visible, select:focus-visible, button:focus-visible { outline: 2px solid var(--seal); outline-offset: 2px; }
 
   .row { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; }
   button.btn {
@@ -88,6 +88,8 @@
   button.btn.primary { background: var(--seal); border-color: var(--seal); color: #fff; font-weight: 600; padding: .45rem 1.2rem; }
   button.btn.primary:hover { opacity: .9; color: #fff; }
   .spacer { margin-left: auto; }
+  .policy-control { display: inline-flex; align-items: center; gap: .45rem; font-size: .82rem; color: var(--muted); }
+  .policy-control select { font: inherit; color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: 5px; padding: .38rem .55rem; }
 
   .split { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
   .split > div { background: var(--surface); padding: .9rem 1rem; display: flex; flex-direction: column; gap: .5rem; min-width: 0; }
@@ -133,6 +135,12 @@
   .population-count { font-family: var(--mono); color: var(--seal); font-size: 1.8rem; font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums; }
   .population-label { font-size: .88rem; font-weight: 600; }
   .population-meta { color: var(--muted); font-size: .8rem; }
+  .reduction { border: 1px solid var(--line); border-radius: 8px; padding: .9rem 1rem; display: flex; flex-direction: column; gap: .65rem; }
+  .reduction-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: .4rem 1rem; }
+  .reduction-score { font-family: var(--mono); color: var(--seal); font-size: 1.25rem; font-weight: 700; }
+  .reduction.ok { border-color: var(--seal); background: var(--seal-soft); }
+  .reduction.gap { border-color: var(--clay); background: var(--clay-soft); }
+  .reduction ol { margin: 0; padding-left: 1.4rem; font-size: .85rem; display: flex; flex-direction: column; gap: .3rem; }
   @media (max-width: 46rem) { .risk-compare { grid-template-columns: 1fr; } }
 
   details { border: 1px solid var(--line); border-radius: 6px; background: var(--surface); }
@@ -196,6 +204,14 @@
       <div class="row">
         <button class="btn primary" id="scanBtn">掃描</button>
         <button class="btn" id="resetBtn">重設對照表編號</button>
+        <label class="policy-control">自動降階
+          <select id="riskPolicy">
+            <option value="off">關閉（只提示）</option>
+            <option value="permissive">寬鬆（低於 0.60）</option>
+            <option value="balanced" selected>平衡（低於 0.30）</option>
+            <option value="strict">嚴格（全部處理）</option>
+          </select>
+        </label>
         <span class="note spacer" id="hint">Ctrl + Enter 也可以送出</span>
       </div>
     </section>
@@ -208,7 +224,7 @@
           <div class="body" id="origBody"></div>
         </div>
         <div class="cloud">
-          <h4>雲端 AI 會看到的</h4>
+          <h4 id="cloudLabel">雲端 AI 會看到的</h4>
           <div class="body" id="maskBody"></div>
         </div>
       </div>
@@ -227,7 +243,7 @@
     </section>
 
     <section class="card" id="riskCard" hidden>
-      <h2>組合風險 <span class="hint">比較原文與遮蔽後結果 · 只提示，不遮蔽</span></h2>
+      <h2>組合風險 <span class="hint" id="riskHint">比較原文與遮蔽後結果</span></h2>
       <div class="risk-compare">
         <div class="risk-stage" id="originalRiskStage">
           <h3>原文風險 <span class="hint">防護前含有的準識別子</span></h3>
@@ -235,10 +251,18 @@
           <ul class="sugg" id="originalRiskSugg"></ul>
         </div>
         <div class="risk-stage" id="residualRiskStage">
-          <h3>遮蔽後殘餘風險 <span class="hint">雲端 AI 實際看得到的資訊</span></h3>
+          <h3><span id="residualRiskName">遮蔽後殘餘風險</span> <span class="hint">雲端 AI 實際看得到的資訊</span></h3>
           <div class="risk" id="riskBox"></div>
           <ul class="sugg" id="riskSugg"></ul>
         </div>
+      </div>
+      <div class="reduction" id="reductionPlan" hidden>
+        <div class="reduction-head">
+          <strong id="reductionTitle"></strong>
+          <span class="reduction-score" id="reductionScore"></span>
+          <span class="note" id="reductionStatus"></span>
+        </div>
+        <ol id="reductionSteps"></ol>
       </div>
       <div class="population" id="populationEstimate" hidden>
         <div class="population-head">
@@ -589,12 +613,13 @@ function markTokens(text) {
 
 async function scan() {
   const text = $('input').value;
+  const riskPolicy = $('riskPolicy').value;
   const hideAll = () => ['resultCard', 'spansCard', 'riskCard', 'mapCard', 'restoreCard'].forEach((id) => { $(id).hidden = true; });
   if (!text.trim()) { hideAll(); return; }
 
   const res = await fetch('/demo/scan', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text })
+    body: JSON.stringify({ text, risk_reduction_policy: riskPolicy })
   });
   if (!res.ok) { $('hint').textContent = '掃描失敗：' + res.status; return; }
   const d = await res.json();
@@ -602,17 +627,25 @@ async function scan() {
   $('resultCard').hidden = false;
   $('origBody').innerHTML = highlight(text, d.spans);
   $('maskBody').innerHTML = markTokens(d.masked);
+  const policyLabels = {off: '關閉', permissive: '寬鬆', balanced: '平衡', strict: '嚴格'};
+  $('cloudLabel').textContent = d.reduction && d.reduction.policy !== 'off'
+    ? `雲端 AI 會看到的（${policyLabels[d.reduction.policy] || d.reduction.policy}降階）`
+    : '雲端 AI 會看到的';
 
   const total = Object.values(d.counts).reduce((a, b) => a + b, 0);
   const detail = Object.entries(d.counts).map(([t, n]) => `${t} x${n}`).join('、') || '無';
   // 每一項各自包一個 span：`.metrics` 是 flex 容器，若全部串成一個字串就只會是
   // 一個 flex 子元素，gap 不會生效、各項會黏在一起（實測撞到）
-  $('metrics').innerHTML = [
+  const metricItems = [
     `遮蔽 <b>${total}</b> 處（${detail}）`,
     `偵測 <b>${d.timing.detect_ms}</b> ms`,
     `替換 <b>${d.timing.mask_ms}</b> ms`,
     `快取命中率 <b>${Math.round(d.cache.hit_rate * 100)}%</b>`
-  ].map((m) => `<span>${m}</span>`).join('');
+  ];
+  if (d.reduction && d.reduction.policy !== 'off') {
+    metricItems.splice(1, 0, `額外降階 <b>${d.reduction.steps.length}</b> 步`);
+  }
+  $('metrics').innerHTML = metricItems.map((m) => `<span>${m}</span>`).join('');
 
   $('spansCard').hidden = d.spans.length === 0;
   $('spansBody').innerHTML = d.spans.map((s) => {
@@ -625,8 +658,8 @@ async function scan() {
     ? `不遮蔽的型別：${d.skip_types.join('、') || '無'}（偵測得到，但依設定保留原文，仍會計入組合風險）`
     : `語意層未啟用，因此姓名與地址不會被偵測到 —— 目前只有規則層在跑。不遮蔽的型別：${d.skip_types.join('、') || '無'}`;
 
-  const renderRisk = (riskValue, stageId, boxId, suggestionsId) => {
-    const visible = Boolean(riskValue && riskValue.score > 0);
+  const renderRisk = (riskValue, stageId, boxId, suggestionsId, forceVisible = false) => {
+    const visible = Boolean(riskValue && (riskValue.score > 0 || forceVisible));
     $(stageId).hidden = !visible;
     if (!visible) return false;
     const warn = riskValue.score >= 0.6;
@@ -639,9 +672,34 @@ async function scan() {
     return true;
   };
 
+  const reductionEnabled = Boolean(d.reduction && d.reduction.policy !== 'off');
+  const reductionVisible = Boolean(reductionEnabled && d.reduction.initial_score > 0);
+  $('residualRiskName').textContent = reductionEnabled ? '降階後殘餘風險' : '遮蔽後殘餘風險';
   const originalVisible = renderRisk(d.original_risk, 'originalRiskStage', 'originalRiskBox', 'originalRiskSugg');
-  const residualVisible = renderRisk(d.risk, 'residualRiskStage', 'riskBox', 'riskSugg');
-  $('riskCard').hidden = !(originalVisible || residualVisible);
+  const residualVisible = renderRisk(d.risk, 'residualRiskStage', 'riskBox', 'riskSugg', reductionVisible);
+  $('riskCard').hidden = !(originalVisible || residualVisible || reductionVisible);
+  $('riskHint').textContent = reductionEnabled
+    ? '比較原文與自動降階後結果 · 只做達標所需的最少處理'
+    : '比較原文與遮蔽後結果 · 只提示，不額外處理準識別子';
+
+  $('reductionPlan').hidden = !reductionVisible;
+  if (reductionVisible) {
+    const plan = d.reduction;
+    const typeLabels = {GENDER: '性別', COMPANY: '公司', AGE: '年齡', ADDRESS: '地址', POSITION: '職稱'};
+    $('reductionPlan').className = 'reduction ' + (plan.met_target ? 'ok' : 'gap');
+    $('reductionTitle').textContent = `${policyLabels[plan.policy] || plan.policy}策略`;
+    $('reductionScore').textContent = `${Number(plan.initial_score).toFixed(2)} → ${Number(plan.final_score).toFixed(2)}`;
+    const target = plan.policy === 'strict' ? '處理所有已辨識準識別子' : `目標低於 ${Number(plan.threshold).toFixed(2)}`;
+    $('reductionStatus').textContent = plan.met_target ? `已達標｜${target}` : `尚未達標｜${target}`;
+    $('reductionSteps').innerHTML = plan.steps.length
+      ? plan.steps.map((step) => {
+          const method = step.method === 'generalize'
+            ? `泛化為「${step.replacement || '較粗粒度'}」`
+            : '改成可還原佔位符';
+          return `<li>${esc(typeLabels[step.type] || step.type)}：${esc(method)}（${step.occurrences || 0} 處），風險 ${Number(step.score_before).toFixed(2)} → ${Number(step.score_after).toFixed(2)}</li>`;
+        }).join('')
+      : '<li>目前殘餘風險已符合策略門檻，不需要額外處理。</li>';
+  }
 
   const estimate = d.original_risk && d.original_risk.population_estimate;
   $('populationEstimate').hidden = !estimate;

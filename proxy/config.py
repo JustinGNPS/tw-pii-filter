@@ -176,6 +176,21 @@ ENABLE_RISK_WARNING = os.getenv(
     "PII_ENABLE_RISK_WARNING", "1"
 ).strip().lower() in ("1", "true", "yes")
 
+# 殘餘風險自動降階 ---------------------------------------------------------
+#
+# 預設 off，維持 Layer 3 原本「只提示、不改內容」的契約。啟用後才會依策略
+# 對遮蔽後仍存在的準識別子做最少必要處理：
+#   permissive：只把高風險降到 0.6 以下
+#   balanced：降到低風險（0.3 以下）
+#   strict：處理所有已辨識的準識別子
+RISK_REDUCTION_POLICY = os.getenv("PII_RISK_REDUCTION_POLICY", "off").strip().lower()
+_RISK_REDUCTION_POLICIES = {"off", "permissive", "balanced", "strict"}
+if RISK_REDUCTION_POLICY not in _RISK_REDUCTION_POLICIES:
+    allowed = ", ".join(sorted(_RISK_REDUCTION_POLICIES))
+    raise ValueError(
+        f"PII_RISK_REDUCTION_POLICY={RISK_REDUCTION_POLICY!r} 無效；可用值：{allowed}"
+    )
+
 
 def startup_summary() -> str:
     """啟動時印的設定摘要 —— 只印變數名稱與 base URL，**不印金鑰內容**。"""
@@ -199,6 +214,7 @@ def startup_summary() -> str:
         f"偵測到但不遮蔽的型別：{skipped}\n"
         f"語意層（NER）：{ner_status}\n"
         f"組合風險提示：{'已啟用' if ENABLE_RISK_WARNING else '未啟用'}\n"
+        f"殘餘風險自動降階：{RISK_REDUCTION_POLICY}\n"
         f"對照表閒置逾時：{f'{MAPPING_IDLE_TIMEOUT:.0f} 秒' if MAPPING_IDLE_TIMEOUT else '停用'}\n"
         f"示範頁面：{'已啟用（/demo）' if ENABLE_DEMO else '未啟用（設 PII_ENABLE_DEMO=1 開啟）'}"
     )
