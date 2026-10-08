@@ -13,6 +13,7 @@ Python 版邏輯有任何變更時，都要重跑本腳本並把更新後的
 """
 
 import json
+from datetime import date
 import sys
 from pathlib import Path
 
@@ -43,7 +44,12 @@ def main() -> None:
     with open(CASES_PATH, encoding="utf-8") as f:
         cases = json.load(f)
 
-    expected = [detect_all(case) for case in cases]
+    expected = [detect_all(case, today=date(2026, 10, 8)) for case in cases]
+    # Python 的離線人口資料屬選填擴充；TS 目前只支援共同的 L1/L3 v1 契約。
+    # 僅移除這個具名欄位，其餘所有欄位仍由 parity 逐值嚴格比對。
+    for result in expected:
+        if result.get("combination_risk"):
+            result["combination_risk"].pop("population_estimate", None)
     _dump(EXPECTED_PATH, expected)
 
     total_spans = sum(len(result["spans"]) for result in expected)

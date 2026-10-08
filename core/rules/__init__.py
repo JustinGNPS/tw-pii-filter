@@ -48,7 +48,7 @@ _DETECTORS = (
 )
 
 
-def detect_all(text: str, extra_spans: list = None) -> dict:
+def detect_all(text: str, extra_spans: list = None, *, today=None) -> dict:
     """依序執行 core/rules 底下所有規則（source="rule"），並可透過 extra_spans
     帶入語意層（如 D 的 NER model，source="model"）已產生的 spans 一併整合。
     所有 spans 合併後經 Layer 4（見 core.rules.conflict_resolver）解析重疊
@@ -65,9 +65,9 @@ def detect_all(text: str, extra_spans: list = None) -> dict:
     `docs/layer3_spec.md`），依 Layer 4 仲裁後的 spans 計算；沒有組合風險
     （score 為 0，即準識別子共現數 < 2）時為 `None`，屬選填欄位。
     """
-    # 全形 ASCII 英數字正規化：讓正則可以比對到全形寫法（如「０９１２…」、「ａｂｃ@…」）。
-    # normalize_fullwidth 只映射 U+FF10-FF19/FF21-FF3A/FF41-FF5A，保證 1:1 等長，
-    # 偵測到的 span 座標可以直接套用回原始 text。
+    # 全形 ASCII 正規化：讓正則可以比對到全形寫法（如「０９１２…」、「ａｂｃ＠…」）。
+    # normalize_fullwidth 映射整個 U+FF01-FF5E 區段與全形空格 U+3000，保證 1:1
+    # 等長，偵測到的 span 座標可以直接套用回原始 text。
     normalized = normalize_fullwidth(text)
     spans = []
     for detector in _DETECTORS:
@@ -82,7 +82,9 @@ def detect_all(text: str, extra_spans: list = None) -> dict:
     spans = resolve_overlaps(spans)
     spans = renumber_replacements(spans)
 
-    risk = compute_combination_risk(text, spans)
+    # Layer 3 的 AGE 正則同樣是 [0-9]，用正規化後的文字才抓得到全形年齡
+    # （例如「３５歲」）。不這麼做會與 TypeScript 版產生分歧。
+    risk = compute_combination_risk(normalized, spans, today=today)
     combination_risk = risk if risk["score"] > 0 else None
 
     return {"text": text, "spans": spans, "combination_risk": combination_risk}

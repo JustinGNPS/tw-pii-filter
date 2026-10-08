@@ -140,13 +140,11 @@ def _extract_age(text: str, today: Optional[date] = None) -> Optional[int]:
 
 def _extract_exact_age(text: str) -> Optional[int]:
     """只取文字明說的歲數；出生年會有生日誤差，不用來查單一年齡統計。"""
-    m = _AGE_DIGIT_PATTERN.search(text)
-    if m:
-        return int(m.group(1))
-    m = _AGE_CHINESE_PATTERN.search(text)
-    if m:
-        return _chinese_number_to_int(m.group(1))
-    return None
+    ages = {int(m.group(1)) for m in _AGE_DIGIT_PATTERN.finditer(text)}
+    ages.update(_chinese_number_to_int(m.group(1)) for m in _AGE_CHINESE_PATTERN.finditer(text))
+    ages.discard(None)
+    # 多人或年齡區間不可只取第一個歲數，否則會回報錯誤的單一年齡人口。
+    return ages.pop() if len(ages) == 1 else None
 
 
 def _has_age(text: str) -> bool:
@@ -191,8 +189,8 @@ def _extract_gender(text: str) -> Optional[str]:
 # 給計算過的區間建議。
 # ---------------------------------------------------------------------------
 
-def _age_generalization_suggestion(text: str) -> Optional[str]:
-    age = _extract_age(text)
+def _age_generalization_suggestion(text: str, today: Optional[date] = None) -> Optional[str]:
+    age = _extract_age(text, today)
     if age is None:
         return "文字中的年齡資訊建議泛化為 5 歲一個區間（例如「32歲」→「30-35歲」）"
     bucket_start = (age // 5) * 5
@@ -211,11 +209,11 @@ _GENERIC_SUGGESTIONS = {
 }
 
 
-def _build_suggestions(text: str, contributing_types: List[str]) -> List[str]:
+def _build_suggestions(text: str, contributing_types: List[str], today: Optional[date] = None) -> List[str]:
     suggestions = []
     for t in contributing_types:
         if t == "AGE":
-            suggestions.append(_age_generalization_suggestion(text))
+            suggestions.append(_age_generalization_suggestion(text, today))
         else:
             suggestion = _GENERIC_SUGGESTIONS.get(t)
             if suggestion:
@@ -237,7 +235,7 @@ def is_warning_worthy(risk: Dict) -> bool:
     return risk.get("score", 0.0) >= WARNING_THRESHOLD
 
 
-def compute_combination_risk(text: str, spans: Optional[List[Dict]] = None) -> Dict:
+def compute_combination_risk(text: str, spans: Optional[List[Dict]] = None, today: Optional[date] = None) -> Dict:
     """
     計算一份文字的組合風險分數。
 
@@ -297,7 +295,7 @@ def compute_combination_risk(text: str, spans: Optional[List[Dict]] = None) -> D
         "score": round(score, 3),
         "contributing_types": contributing_sorted,
         "risk_level": _risk_level(score),
-        "suggestions": _build_suggestions(text, contributing_sorted) if score > 0 else [],
+        "suggestions": _build_suggestions(text, contributing_sorted, today) if score > 0 else [],
     }
 
     if score > 0:

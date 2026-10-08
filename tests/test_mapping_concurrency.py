@@ -23,7 +23,7 @@
 import threading
 from concurrent.futures import ThreadPoolExecutor
 
-from proxy.mapping import MappingTable
+from core.redact.mapping import MappingTable
 
 
 def test_大量執行緒同時搶第一次配號_只會配出一個號碼():

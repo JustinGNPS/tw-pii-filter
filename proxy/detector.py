@@ -19,7 +19,7 @@ from typing import Any
 from core.rules import detect_all as _detect_all
 from proxy import config
 from proxy.cache import DetectionCache
-from proxy.mapping import normalize_type
+from core.redact.mapping import normalize_type
 
 # JSON 路徑：dict 的 key 用 str，list 的 index 用 int
 Path = tuple[Any, ...]

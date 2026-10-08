@@ -114,3 +114,9 @@ def test_weighted_score_still_works_when_snapshot_is_unavailable(monkeypatch):
     assert result["score"] == 0.5
     assert result["risk_level"] == "中"
     assert "population_estimate" not in result
+def test_multiple_ages_do_not_pick_first_person():
+    from core.risk.combination_risk import compute_combination_risk
+
+    result = compute_combination_risk("35歲與65歲男性")
+    assert "population_estimate" not in result
+    assert result["score"] == 0.5
