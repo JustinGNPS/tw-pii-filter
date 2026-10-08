@@ -24,19 +24,22 @@ import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+import httpx
 from fastapi import FastAPI, Request, Response
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
 from proxy import (
     anthropic_adapter,
     config,
+    demo,
     detector,
     forward,
     masker,
-    restorer,
     risk,
+    traffic,
 )
-from proxy.mapping import MappingTable
+from core.redact import restorer
+from core.redact.mapping import MappingTable
 
 # Windows 主控台預設是 cp950，中文警告訊息可能會炸掉；統一轉成 utf-8
 for _stream in (sys.stdout, sys.stderr):
@@ -61,8 +64,16 @@ async def lifespan(app: FastAPI):
     # 閒置逾時後會自動清空（決定 11），逾時秒數見 config.MAPPING_IDLE_TIMEOUT
     app.state.mapping = MappingTable(idle_timeout=config.MAPPING_IDLE_TIMEOUT)
     logger.info("proxy 啟動\n%s", config.startup_summary())
+    if not config.UPSTREAM_BASE_URL:
+        logger.warning(forward.MISSING_UPSTREAM_MESSAGE)
     if not config.UPSTREAM_API_KEY:
         logger.warning("找不到上游金鑰，轉發一定會失敗。請確認 .env 內的變數名稱。")
+    # agent 沒指到 proxy 時不會有任何跡象（見 proxy/traffic.py），
+    # 所以先講明該看什麼，使用者才知道「沒出現那一行」代表什麼
+    logger.info(
+        "尚未收到任何請求。agent 開始工作後這裡會印一行「第一個請求已抵達 proxy」；"
+        "若始終沒出現，代表流量沒有走這裡（agent 的 base URL 沒指過來）。"
+    )
     if config.ENABLE_NER:
         # core/ner/detector.py 的 `_get_detector()` 單例目前沒有鎖（C 在 PR #11
         # review 抓到：`asyncio.to_thread` 讓多個請求可能真的並行進 thread pool，
@@ -80,6 +91,100 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="tw-pii-filter proxy", lifespan=lifespan)
 
+# 示範頁面（`PII_ENABLE_DEMO=1` 才會真的回應，否則一律 404）。
+# **必須在檔案底部那兩條萬用路由之前註冊** —— FastAPI 依註冊順序比對，
+# 晚註冊的話 `/demo` 會先被 `/{path:path}` 接走、當成要轉發給上游的請求。
+app.include_router(demo.router)
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon() -> Response:
+    """瀏覽器會自動要 favicon，不要把它轉發給上游。
+
+    沒有這條路由的話，`/{path:path}` 萬用路由會把它當成要轉發的請求送出去 ——
+    實測是一次 1367 ms 的往返只為了拿回 404，而且會被計入「agent 流量」，
+    讓那個判準（見 `proxy/traffic.py`）失真。開了 `/demo` 頁面之後每次載入
+    都會發生一次。
+    """
+    return Response(status_code=204)
+
+
+@app.exception_handler(forward.UpstreamNotConfigured)
+async def _upstream_not_configured(
+    request: Request, exc: forward.UpstreamNotConfigured
+) -> Response:
+    """沒設定上游 base URL 時，回一則講得清楚的錯誤給 agent。
+
+    掛成 app 層級的處理器（而不是在每個路由各包一個 try），是因為轉發有
+    **兩條路徑**：`_proxy()` 與 Anthropic 相容路由，兩邊都會呼叫
+    `forward.open_upstream()`。掛在這裡一次涵蓋，日後多一條路徑也不會漏。
+
+    用 502（Bad Gateway）而不是 500：問題出在「proxy 與上游之間」而不是
+    agent 送來的請求。body 用 OpenAI 的錯誤格式包，agent 才顯示得出訊息 ——
+    多數 OpenAI 相容客戶端只認 `error.message` 這個欄位。
+    """
+    logger.error("%s", exc)
+    return JSONResponse(
+        status_code=502,
+        content={
+            "error": {
+                "message": str(exc),
+                "type": "proxy_configuration_error",
+                "code": "upstream_not_configured",
+            }
+        },
+    )
+
+
+@app.exception_handler(httpx.RequestError)
+async def _upstream_unreachable(request: Request, exc: httpx.RequestError) -> Response:
+    """連不上上游時，回一則講得清楚的錯誤，而不是無訊息的 500。
+
+    這是 `_upstream_not_configured` 的同一族問題：base URL **設了但連不上**
+    （位址打錯、VPN 沒開、上游掛掉、逾時）。原本這些 `httpx.RequestError`
+    會一路往上拋，agent 只收到一個沒有任何線索的 500。
+
+    逾時與連線失敗分開給狀態碼：
+      - `TimeoutException` -> **504**（Gateway Timeout）：連得到，只是太慢。
+        值得重試，也可能是 `PROXY_READ_TIMEOUT` 設太短。
+      - 其餘 -> **502**（Bad Gateway）：根本連不上，重試通常沒用。
+
+    **涵蓋範圍僅限「開始串流之前」。** 若上游是在 SSE 串流中途斷掉，回應的
+    標頭早就送出去了，這裡改不了狀態碼 —— 那種情況只能讓連線中斷，由 agent
+    自己判斷。這是 HTTP 的限制，不是可以繞過的實作選擇。
+    """
+    upstream = config.UPSTREAM_BASE_URL or "（未設定）"
+    if isinstance(exc, httpx.TimeoutException):
+        status, code = 504, "upstream_timeout"
+        detail = (
+            f"連線上游逾時：{upstream}。"
+            f"目前設定為連線 {config.CONNECT_TIMEOUT} 秒、讀取 {config.READ_TIMEOUT} 秒"
+            "（可用 PROXY_CONNECT_TIMEOUT / PROXY_READ_TIMEOUT 調整）。"
+        )
+    else:
+        status, code = 502, "upstream_unreachable"
+        detail = (
+            f"連不上上游：{upstream}。"
+            "請確認 .env 的 UPSTREAM_BASE_URL 是否正確、該位址是否可達"
+            "（校內服務可能需要先連上 VPN）。"
+        )
+    # 例外訊息本身（例如 [Errno 11001] getaddrinfo failed）對診斷很有用，
+    # 但它是英文技術訊息，附在後面而不是取代上面的說明
+    reason = str(exc) or type(exc).__name__
+    message = f"{detail}原始錯誤：{reason}"
+
+    logger.error("%s", message)
+    return JSONResponse(
+        status_code=status,
+        content={
+            "error": {
+                "message": message,
+                "type": "proxy_upstream_error",
+                "code": code,
+            }
+        },
+    )
+
 
 @app.get("/healthz")
 async def healthz() -> dict:
@@ -91,8 +196,59 @@ async def healthz() -> dict:
         "mode": "masking",  # 第二版：遮蔽 + 還原
         "ner_enabled": config.ENABLE_NER,
         "mapping_entries": len(app.state.mapping),
+        # 累計：每個型別看過幾個不重複的真值。log 只印「本輪新增」，
+        # 想知道整體狀況看這裡（見 _log_new_values）
+        "mapping_by_type": app.state.mapping.issued_counts(),
         "detection_cache": detector.CACHE.stats(),
+        "traffic": traffic.STATS.snapshot(),
     }
+
+
+def _record_arrival(method: str, path: str) -> None:
+    """記一次「請求真的抵達 proxy」，第一次額外印一行。
+
+    只在轉發路徑上呼叫，`/healthz` 不算 —— 使用者自己 curl 健康檢查不代表
+    agent 走了 proxy，把它算進去會讓這個數字失去意義。
+    """
+    if traffic.STATS.record():
+        logger.info(
+            "第一個請求已抵達 proxy（%s /%s）—— 流量確實有走這裡",
+            method,
+            path.lstrip("/"),
+        )
+
+
+def _log_new_values(before: dict[str, int], table: MappingTable, tag: str = "") -> None:
+    """印出「這一輪新增的個資」，沒有新增就**完全不印**。
+
+    為什麼不印「這包 payload 遮了幾筆」：agent 每輪都重送整段對話歷史，同一批
+    個資每輪都會被重新掃到，那個數字會隨對話變長一路往上爬（實測一次 Codex
+    工作階段：6 -> 8 -> 14 -> 17，而後面三輪根本沒有任何新的個資）。使用者
+    真正要知道的是「**又有沒看過的個資送出去了**」，不是「歷史裡總共有幾筆」。
+
+    沒有新增就靜默，是因為那種情況沒有任何新資訊 —— 該輪仍然有一行
+    `POST /... -> 200` 的完成紀錄可以證明 proxy 有在工作，累計狀況則看
+    `/healthz` 的 `mapping_by_type`。
+
+    只印型別與數量，絕不印遮蔽掉的原始內容。
+    """
+    new = masker.new_value_counts(before, table.issued_counts())
+    if not new:
+        return
+    logger.warning(
+        "已遮蔽%s：%s｜快取命中率 %.0f%%",
+        tag,
+        detector.format_new_values(new),
+        detector.CACHE.hit_rate * 100,
+    )
+    # 只記型別與數量，絕不記原始內容（見 proxy/traffic.py 的紅線說明）
+    traffic.EVENTS.record(
+        "mask",
+        counts=new,
+        total=sum(new.values()),
+        cache_hit_rate=round(detector.CACHE.hit_rate, 3),
+        tag=tag,
+    )
 
 
 def _log_combination_risk(combination_risk: dict | None) -> None:
@@ -123,15 +279,11 @@ def _mask_request(path: str, body: bytes, table: MappingTable) -> tuple[bytes, f
     started = time.perf_counter()
     try:
         payload = json.loads(body.decode("utf-8"))
+        issued_before = table.issued_counts()
         counts, combination_risk = masker.mask_payload_with_risk(payload, table)
         if counts:
             body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-            # 只印型別與筆數，絕不印遮蔽掉的原始內容
-            logger.warning(
-                "已遮蔽：%s｜快取命中率 %.0f%%",
-                detector.format_warning(counts),
-                detector.CACHE.hit_rate * 100,
-            )
+        _log_new_values(issued_before, table)
         _log_combination_risk(combination_risk)
     except json.JSONDecodeError:
         pass  # 不是 JSON（例如檔案上傳），本來就沒得掃
@@ -141,6 +293,7 @@ def _mask_request(path: str, body: bytes, table: MappingTable) -> tuple[bytes, f
 
 
 async def _proxy(path: str, request: Request) -> Response:
+    _record_arrival(request.method, path)
     table: MappingTable = request.app.state.mapping
     body = await request.body()
     body, detect_ms = await asyncio.to_thread(_mask_request, path, body, table)
@@ -187,6 +340,17 @@ async def _proxy(path: str, request: Request) -> Response:
                     sse.restored,
                     f"（{sse.unknown} 筆查無對照）" if sse.unknown else "",
                 )
+                traffic.EVENTS.record(
+                    "done",
+                    method=request.method,
+                    path=path,
+                    status=upstream.status_code,
+                    stream=True,
+                    upstream_ms=round(total),
+                    detect_ms=round(detect_ms, 1),
+                    restored=sse.restored,
+                    unknown=sse.unknown,
+                )
 
         return StreamingResponse(
             relay(),
@@ -212,6 +376,17 @@ async def _proxy(path: str, request: Request) -> Response:
         detect_ms,
         restored,
         f"（{unknown} 筆查無對照）" if unknown else "",
+    )
+    traffic.EVENTS.record(
+        "done",
+        method=request.method,
+        path=path,
+        status=upstream.status_code,
+        stream=False,
+        upstream_ms=round(total),
+        detect_ms=round(detect_ms, 1),
+        restored=restored,
+        unknown=unknown,
     )
     return Response(
         content=content,
@@ -259,13 +434,9 @@ def _mask_anthropic_payload(payload: dict, table: MappingTable) -> tuple[dict, f
     """
     started = time.perf_counter()
     try:
-        counts, combination_risk = masker.mask_payload_with_risk(payload, table)
-        if counts:
-            logger.warning(
-                "已遮蔽（Claude Code）：%s｜快取命中率 %.0f%%",
-                detector.format_warning(counts),
-                detector.CACHE.hit_rate * 100,
-            )
+        issued_before = table.issued_counts()
+        _, combination_risk = masker.mask_payload_with_risk(payload, table)
+        _log_new_values(issued_before, table, tag="（Claude Code）")
         _log_combination_risk(combination_risk)
     except Exception as exc:  # noqa: BLE001 - 遮蔽失敗不能讓 agent 拿不到回覆
         logger.error("遮蔽失敗，該次請求未受保護：%s", exc)
@@ -361,6 +532,17 @@ async def _relay_anthropic_once(
         restored,
         f"（{unknown} 筆查無對照）" if unknown else "",
     )
+    traffic.EVENTS.record(
+        "done",
+        method="POST",
+        path="v1/messages",
+        status=upstream.status_code,
+        stream=False,
+        upstream_ms=round(total),
+        detect_ms=round(detect_ms, 1),
+        restored=restored,
+        unknown=unknown,
+    )
 
     sse = anthropic_adapter.response_to_event_stream(
         openai_response, model=model, message_id=message_id
@@ -417,6 +599,17 @@ async def _relay_anthropic_stream(
                 detect_ms,
                 sse_restorer.restored,
                 f"（{sse_restorer.unknown} 筆查無對照）" if sse_restorer.unknown else "",
+            )
+            traffic.EVENTS.record(
+                "done",
+                method="POST",
+                path="v1/messages",
+                status=upstream.status_code,
+                stream=True,
+                upstream_ms=round(total),
+                detect_ms=round(detect_ms, 1),
+                restored=sse_restorer.restored,
+                unknown=sse_restorer.unknown,
             )
 
     return StreamingResponse(relay(), media_type="text/event-stream")
@@ -536,6 +729,7 @@ def _has_tool_result(payload: dict) -> bool:
 
 @app.post("/v1/messages")
 async def anthropic_messages(request: Request) -> Response:
+    _record_arrival("POST", "v1/messages")
     if _CAPTURE_ANTHROPIC:
         return await _capture_anthropic_messages(request)
     return await _proxy_anthropic(request)

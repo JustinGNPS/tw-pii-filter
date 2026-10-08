@@ -51,7 +51,7 @@ from core.risk.combination_risk import (
     is_warning_worthy,
 )
 from proxy import config
-from proxy.mapping import normalize_type
+from core.redact.mapping import normalize_type
 
 __all__ = [
     "residual_spans",

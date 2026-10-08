@@ -154,6 +154,22 @@ class MappingTable:
             self._value_of[token] = value
             return token
 
+    def issued_counts(self) -> dict[str, int]:
+        """每個型別**至今發出過幾個佔位符**的快照（＝看過幾個不重複的真值）。
+
+        `_counter` 記的是每個型別已發出的最大號碼，而號碼只在配給新真值時才
+        遞增，所以它天然就是「不重複真值的累計數」，不需要另外維護計數器。
+
+        用途是讓呼叫端算得出「這一輪**新增**了什麼」：agent 每輪都會重送整段
+        對話歷史，同一批個資會被反覆掃到，但只有第一次會發新號碼。前後各取
+        一次快照相減，就是這一輪真正新出現的個資。
+
+        閒置逾時清空後計數會歸零，因此相減可能出現負值 —— 呼叫端要處理，
+        見 `proxy/masker.new_value_counts()`。
+        """
+        with self._lock:
+            return dict(self._counter)
+
     def value_for(self, token: str) -> str | None:
         """查佔位符對應的真值；**查不到回傳 None，絕不猜測**。
 

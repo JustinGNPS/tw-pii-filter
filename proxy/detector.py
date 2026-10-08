@@ -19,7 +19,7 @@ from typing import Any
 from core.rules import detect_all as _detect_all
 from proxy import config
 from proxy.cache import DetectionCache
-from proxy.mapping import normalize_type
+from core.redact.mapping import normalize_type
 
 # JSON 路徑：dict 的 key 用 str，list 的 index 用 int
 Path = tuple[Any, ...]
@@ -316,6 +316,19 @@ def summarize(results: list[dict]) -> dict[str, int]:
         for span in result["spans"]:
             counts[span["type"]] = counts.get(span["type"], 0) + 1
     return counts
+
+
+def format_new_values(counts: dict[str, int]) -> str:
+    """把「本輪新增的不重複真值」格式化成一行。無新增時回傳空字串。
+
+    與 `format_warning()` 分開是因為兩者數的是不同的東西：那邊是「這包
+    payload 裡遮掉幾處」（含重複出現），這裡是「多了幾個沒看過的真值」。
+    """
+    if not counts:
+        return ""
+    detail = "、".join(f"{t} x{n}" for t, n in sorted(counts.items()))
+    total = sum(counts.values())
+    return f"本輪新增 {total} 筆個資（{detail}）"
 
 
 def format_warning(counts: dict[str, int]) -> str:
