@@ -364,7 +364,7 @@ set PII_ENABLE_NER=1</code></pre>
             <tr><td>偵測快取命中率</td><td class="mono">57% → 87%</td><td>對話越長越高</td></tr>
             <tr><td>語意層 recall</td><td class="mono">97.6%</td><td>修好 512 token 截斷後</td></tr>
             <tr><td>agent 相容性</td><td class="mono">6 / 7</td><td>Cursor 不支援</td></tr>
-            <tr><td>測試</td><td class="mono">375 + 35</td><td>Python + TypeScript</td></tr>
+            <tr><td>測試</td><td class="mono">420 + 35</td><td>Python + TypeScript</td></tr>
           </tbody>
         </table>
       </div>
@@ -373,7 +373,6 @@ set PII_ENABLE_NER=1</code></pre>
     <section class="card">
       <h2>目前的缺口 <span class="hint">誠實列出來，不藏</span></h2>
       <ul>
-        <li><span class="pill gap">缺口</span> <b>全形英數偵測不到</b> —— <code>Ａ１２３４５６７８９</code> 這種寫法會整個漏掉</li>
         <li><span class="pill gap">缺口</span> 組合風險有三種型別的權重是死碼（被語意層白名單擋掉）</li>
         <li><span class="pill wip">未做</span> Claude Code 的圖片／文件附件還不會翻譯</li>
         <li><span class="pill wip">未做</span> 打包成一般使用者可以直接下載安裝的形式</li>
