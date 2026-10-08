@@ -162,6 +162,42 @@ ul.tight li{margin:5px 0; font-size:14.5px}
 .ba{display:grid; grid-template-columns:1fr 1fr; gap:14px; margin:12px 0}
 @media (max-width:760px){.ba{grid-template-columns:1fr}}
 
+/* ── 擴充模擬：假的聊天視窗 ── */
+.chat{
+  border:1px solid var(--line); border-radius:12px; overflow:hidden;
+  background:var(--panel); margin:18px 0 0;
+}
+.chat-head{
+  display:flex; align-items:center; gap:7px; padding:10px 14px;
+  background:var(--code); border-bottom:1px solid var(--line);
+}
+.chat-head .dot{width:10px; height:10px; border-radius:50%; background:var(--line)}
+.chat-title{margin-left:8px; font-size:12.5px; color:var(--muted)}
+.chat-body{padding:18px 16px; min-height:70px}
+.bubble{
+  display:inline-block; padding:9px 14px; border-radius:14px 14px 14px 4px;
+  background:var(--code); font-size:14px; color:var(--muted);
+}
+.composer{padding:12px 14px 14px; border-top:1px solid var(--line)}
+.composer textarea{min-height:64px; font-size:13.5px}
+.composer-bar{display:flex; align-items:center; gap:12px; margin-top:10px; flex-wrap:wrap}
+.composer-bar .hint{font-size:12.5px; color:var(--muted); flex:1; min-width:180px}
+
+#ext-result{
+  margin-top:16px; padding:14px 16px; border-radius:9px;
+  border:1px solid var(--line); background:var(--panel); font-size:13.5px;
+}
+#ext-result h5{margin:0 0 9px; font-size:14px}
+#ext-result .sent{
+  font-family:ui-monospace,Consolas,monospace; font-size:13px; line-height:1.8;
+  background:var(--code); padding:11px 13px; border-radius:7px;
+  white-space:pre-wrap; word-break:break-word; margin:8px 0;
+}
+#ext-result .verdict{font-size:13px; color:var(--muted); margin:0}
+#ext-result.good{border-left:4px solid var(--low)}
+#ext-result.raw{border-left:4px solid var(--high)}
+#ext-result.cancel{border-left:4px solid var(--muted)}
+
 /* ── 「為什麼沒抓到」說明區 ── */
 #rejects{
   margin:0 0 16px; padding:13px 16px; border-radius:9px;
@@ -299,6 +335,54 @@ footer a{color:var(--accent)}
       查不到對應真值的佔位符一律<b>原樣保留、絕不猜測</b> ——
       雲端 AI 可能自己編出沒發過的佔位符（幻覺），猜測等同於憑空捏造一筆個資塞進使用者的內容裡。
       你可以在上面那段回覆裡亂打一個 <code>[TW_ID_9]</code> 試試看。
+    </p>
+  </div>
+</section>
+
+<section id="ext">
+  <div class="wrap">
+    <h2>載體一：瀏覽器擴充長什麼樣</h2>
+    <p class="sub">
+      上面那段是「把文字丟進去看結果」。但一般使用者真正會碰到的介面長這樣 ——
+      在 ChatGPT 的輸入框裡按右鍵。
+    </p>
+
+    <div class="notice">
+      ✅ <strong>下面那個確認面板是擴充的真品，不是仿製品。</strong>
+      這一段直接 <code>import</code> 了擴充的 <code>content/panel.ts</code> 與
+      <code>masking.ts</code>，流程也照 <code>content/index.ts</code> 走一遍
+      （預覽配號 → 確認面板 → 依勾選結果正式配號 → 插入）。
+      <b>你在這裡按到的，就是裝上擴充後會看到的那個東西。</b>
+    </div>
+
+    <div class="chat">
+      <div class="chat-head">
+        <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+        <span class="chat-title">某 AI 聊天網站</span>
+      </div>
+      <div class="chat-body">
+        <div class="bubble">有什麼可以幫你的嗎？</div>
+      </div>
+      <div class="composer">
+        <textarea id="chat-input" rows="3"></textarea>
+        <div class="composer-bar">
+          <span class="hint" id="chat-hint">↑ 這是你剪貼簿裡的內容，準備貼進去</span>
+          <button class="go" id="btn-ext">🖱 右鍵 → 🛡 隱私處理後貼上</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="ext-result" hidden></div>
+
+    <p class="fine">
+      <b>三個刻意的設計：</b>
+      <b>① 每一項都能取消勾選</b> —— 偵測是輔助不是強制，使用者有最終決定權；
+      <b>② 信心值低於 0.7 會特別標紅</b> 提醒「這筆可能是誤判，自己看一眼」；
+      <b>③ 沒偵測到東西時面板完全不跳</b> —— 不打擾是擴充能被長期留著的前提。
+      <br><br>
+      實際的擴充用 <b>Shadow DOM</b> 把面板隔離在宿主網頁之外：
+      ChatGPT、Gemini 這些網站的 global CSS 極具侵略性，不隔離樣式會被洗掉，
+      也可能反過來汙染對方的頁面。
     </p>
   </div>
 </section>

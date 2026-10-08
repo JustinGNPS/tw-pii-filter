@@ -31,6 +31,7 @@ import {
   isValidTwTax,
   type Span,
 } from '../../extension/src/core';
+import { showPanel } from '../../extension/src/content/panel';
 import { maskText, riskLevel, typeLabel } from '../../extension/src/masking';
 import { PlaceholderAllocator } from '../../extension/src/placeholder';
 
@@ -395,6 +396,120 @@ document.querySelectorAll<HTMLButtonElement>('.chip[data-sample]').forEach((butt
 // 進站先載一個範例，讓第一眼就看得到東西在動。
 input.value = SAMPLES.service;
 run();
+
+// ════════════════════════════════════════════════════════════
+// 載體一（瀏覽器擴充）的流程模擬
+//
+// 這一段**不是預錄、也不是仿製品**：`showPanel()` 直接 import 擴充的
+// `content/panel.ts`（它零 chrome 依賴，只用 DOM 與 Shadow DOM），
+// 流程照 `content/index.ts` 走一遍：
+//
+//   偵測 -> 預覽配號 -> 確認面板 -> 依勾選結果正式配號 -> 插入
+//
+// 「預覽配號器」那一步是擴充自己的設計，不能省：使用者可能取消勾選某些
+// 項目，直接在正式配號器上配會留下用不到的號碼缺口。照抄才算忠實。
+//
+// 唯一的差別是不碰 chrome.storage（網頁沒有），所以配號狀態從空的開始，
+// 等同「這個對話的第一次貼上」。
+// ════════════════════════════════════════════════════════════
+
+const chatInput = document.getElementById('chat-input') as HTMLTextAreaElement | null;
+const btnExt = document.getElementById('btn-ext') as HTMLButtonElement | null;
+const extResult = document.getElementById('ext-result');
+const chatHint = document.getElementById('chat-hint');
+
+const EXT_SAMPLE = `幫我看一下這段客訴怎麼回比較好：
+客戶王大明（身分證 A123456789）說他的信用卡 4111111111111111 被重複扣款，
+聯絡電話 0912345678，公司統編 12345675。`;
+
+if (chatInput) chatInput.value = EXT_SAMPLE;
+
+function showExtResult(
+  kind: 'good' | 'raw' | 'cancel',
+  title: string,
+  sent: string | null,
+  verdict: string,
+): void {
+  if (!extResult) return;
+  extResult.className = kind;
+  extResult.innerHTML =
+    `<h5>${title}</h5>` +
+    (sent === null ? '' : `<div class="sent">${highlightTokens(sent)}</div>`) +
+    `<p class="verdict">${verdict}</p>`;
+  extResult.hidden = false;
+}
+
+async function runExtensionFlow(): Promise<void> {
+  if (!chatInput || !btnExt) return;
+  const text = chatInput.value;
+  if (!text.trim()) return;
+
+  const spans = detectAll(text).spans;
+
+  // 沒偵測到東西就完全不打擾使用者 —— 這是擴充能被長期留著的前提。
+  if (spans.length === 0) {
+    showExtResult(
+      'cancel',
+      '面板沒有跳出來',
+      null,
+      '這段文字沒有偵測到任何個資，擴充直接把原文貼上、不打擾你。' +
+        '<b>不該跳的時候不跳</b>，跟該跳的時候要跳一樣重要。',
+    );
+    return;
+  }
+
+  // 面板上顯示的佔位符用「預覽」配號器算（擴充的作法，見 content/index.ts）
+  const preview = new PlaceholderAllocator();
+  const previewPlaceholders = spans.map((span) => preview.allocate(span.type, span.text));
+
+  btnExt.disabled = true;
+  let decision;
+  try {
+    decision = await showPanel(spans, previewPlaceholders);
+  } finally {
+    btnExt.disabled = false;
+  }
+
+  if (decision.action === 'cancel') {
+    showExtResult(
+      'cancel',
+      '你選了「不貼上」—— 什麼都沒有送出去',
+      null,
+      '輸入框維持原狀，原文也沒有離開你的電腦。',
+    );
+    return;
+  }
+
+  if (decision.action === 'raw') {
+    chatInput.value = text;
+    showExtResult(
+      'raw',
+      '你選了「直接貼上原文」—— 個資會原封不動送進雲端',
+      text,
+      '⚠️ 擴充不會攔住你 —— <b>使用者有最終決定權</b>，這是刻意的。' +
+        '但上面這些內容會原文進入雲端模型的上下文。',
+    );
+    return;
+  }
+
+  const allocator = new PlaceholderAllocator();
+  const { maskedText, mapping } = maskText(text, decision.spans, allocator);
+  chatInput.value = maskedText;
+  if (chatHint) chatHint.textContent = '↑ 輸入框裡的內容已被替換';
+
+  const skipped = spans.length - decision.spans.length;
+  showExtResult(
+    'good',
+    `已遮蔽 ${mapping.length} 筆後貼進輸入框`,
+    maskedText,
+    `這就是雲端 AI 會看到的內容。對照表（${mapping.length} 筆）只存在你的瀏覽器裡，絕不外傳。` +
+      (skipped > 0
+        ? ` <b>你取消勾選了 ${skipped} 項</b>，那些維持原文送出。`
+        : ''),
+  );
+}
+
+btnExt?.addEventListener('click', () => void runExtensionFlow());
 
 // ════════════════════════════════════════════════════════════
 // 「完整系統還能做什麼」：三個預錄重現的分頁
