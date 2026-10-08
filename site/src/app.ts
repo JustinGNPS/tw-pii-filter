@@ -256,3 +256,183 @@ document.querySelectorAll<HTMLButtonElement>('.chip[data-sample]').forEach((butt
 // 進站先載一個範例，讓第一眼就看得到東西在動。
 input.value = SAMPLES.service;
 run();
+
+// ════════════════════════════════════════════════════════════
+// 「完整系統還能做什麼」：三個預錄重現的分頁
+// ════════════════════════════════════════════════════════════
+
+const tabs = Array.from(document.querySelectorAll<HTMLButtonElement>('.tab[data-tab]'));
+
+tabs.forEach((tab) => {
+  tab.addEventListener('click', () => {
+    const name = tab.dataset.tab ?? '';
+    tabs.forEach((other) => {
+      const selected = other === tab;
+      other.setAttribute('aria-selected', String(selected));
+      const panel = document.getElementById(`tab-${other.dataset.tab}`);
+      if (panel) panel.hidden = !selected;
+    });
+    // 切到 Proxy 分頁時，若還沒播過就自動播一次——這一段是靜止畫面最沒說服力、
+    // 動起來最有說服力的一塊，不該要求使用者再多按一次。
+    if (name === 'proxy' && !hasPlayed) void playTerminal();
+  });
+});
+
+// ────────────────────────────────────────────────────────────
+// Proxy 攔截過程的終端機重現
+//
+// 這些行**不是手寫的假畫面**：出自 2026-08-22 以真實 Codex 執行
+// 「修改一個含個資的檔案」任務時，proxy 留下的 proxy_writetest.log。
+// 時間戳與毫秒數都是原值，只把上游端點網址隱去（那是內部設施，
+// 沒有理由出現在公開網頁上）。
+//
+// delay 是「這一行印出來之後停多久」，用來重現當時的節奏感；
+// 原始 log 的時間戳跨度約 20 秒，這裡壓縮成約 20 秒的播放長度。
+// ────────────────────────────────────────────────────────────
+interface TermLine {
+  text: string;
+  cls?: 'cmd' | 'warnline' | 'infoline' | 'note' | 'hit';
+  delay?: number;
+}
+
+const TERM_SCRIPT: TermLine[] = [
+  { text: '$ set PII_ENABLE_NER=0', cls: 'cmd', delay: 260 },
+  { text: '$ .venv\\Scripts\\python.exe -m uvicorn proxy.main:app --port 8010', cls: 'cmd', delay: 650 },
+  { text: '' },
+  { text: '12:40:58 [INFO] proxy 啟動', cls: 'infoline', delay: 90 },
+  { text: '上游 base URL：（由 .env 指定）', delay: 60 },
+  { text: '上游金鑰：已載入（來自 UPSTREAM_API_KEY）', delay: 60 },
+  { text: '預設模型：gpt-4.1-mini', delay: 60 },
+  { text: '偵測到但不遮蔽的型別：COMPANY、POSITION', delay: 60 },
+  { text: '語意層（NER）：未啟用（僅規則層）', delay: 60 },
+  { text: '組合風險提示：已啟用', delay: 60 },
+  { text: '對照表閒置逾時：1800 秒', delay: 420 },
+  {
+    text: '12:40:58 [INFO] 尚未收到任何請求。agent 開始工作後這裡會印一行',
+    cls: 'infoline',
+    delay: 60,
+  },
+  {
+    text: '                「第一個請求已抵達 proxy」；若始終沒出現，代表流量沒有走這裡。',
+    cls: 'infoline',
+    delay: 900,
+  },
+  { text: '' },
+  { text: '# ── 另一個終端機：把 Codex 指向 proxy，叫它改一個含個資的檔案 ──', cls: 'note', delay: 1100 },
+  { text: '' },
+  {
+    text: '12:41:27 [INFO] 第一個請求已抵達 proxy（POST /responses）—— 流量確實有走這裡',
+    cls: 'hit',
+    delay: 700,
+  },
+  {
+    text: '12:41:27 [INFO] POST /responses -> 200 [SSE] 上游 3135 ms｜遮蔽 5.8 ms｜還原 0 筆',
+    cls: 'infoline',
+    delay: 850,
+  },
+  {
+    text: '12:41:32 [WARNING] 已遮蔽：偵測到 6 筆敏感資訊（TW_ID x3、TW_PHONE_M x3）｜快取命中率 57%',
+    cls: 'warnline',
+    delay: 950,
+  },
+  {
+    text: '12:41:35 [INFO] POST /responses -> 200 [SSE] 上游 3424 ms｜遮蔽 3.8 ms｜還原 9 筆',
+    cls: 'infoline',
+    delay: 500,
+  },
+  {
+    text: '12:41:35 [WARNING] 已遮蔽：偵測到 8 筆敏感資訊（TW_ID x5、TW_PHONE_M x3）｜快取命中率 64%',
+    cls: 'warnline',
+    delay: 950,
+  },
+  {
+    text: '12:41:42 [WARNING] 已遮蔽：偵測到 14 筆敏感資訊（TW_ID x8、TW_PHONE_M x6）｜快取命中率 76%',
+    cls: 'warnline',
+    delay: 950,
+  },
+  {
+    text: '12:41:48 [INFO] POST /responses -> 200 [SSE] 上游 3262 ms｜遮蔽 5.5 ms｜還原 4 筆',
+    cls: 'infoline',
+    delay: 500,
+  },
+  {
+    text: '12:41:49 [WARNING] 已遮蔽：偵測到 15 筆敏感資訊（TW_ID x9、TW_PHONE_M x6）｜快取命中率 81%',
+    cls: 'warnline',
+    delay: 1100,
+  },
+  { text: '' },
+  { text: '# ── Codex 完成任務，檔案被正確改好 ──', cls: 'note', delay: 500 },
+  {
+    text: '# 磁碟上的檔案是「真值」，不是 [TW_ID_1] —— 回程還原有做到。',
+    cls: 'note',
+    delay: 500,
+  },
+  {
+    text: '# 整段過程中，雲端 LLM 看到的每一個身分證與電話都是佔位符。',
+    cls: 'note',
+  },
+];
+
+const term = document.getElementById('term');
+const btnPlay = document.getElementById('btn-play') as HTMLButtonElement | null;
+const playHint = document.getElementById('play-hint');
+let hasPlayed = false;
+let playing = false;
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function playTerminal(): Promise<void> {
+  if (!term || playing) return;
+  playing = true;
+  hasPlayed = true;
+  if (btnPlay) {
+    btnPlay.disabled = true;
+    btnPlay.textContent = '播放中⋯⋯';
+  }
+  if (playHint) playHint.textContent = '';
+  term.innerHTML = '';
+
+  for (const line of TERM_SCRIPT) {
+    const span = document.createElement('span');
+    if (line.cls) span.className = line.cls;
+    span.textContent = line.text + '\n';
+    term.appendChild(span);
+    term.scrollTop = term.scrollHeight;
+    await sleep(line.delay ?? 55);
+  }
+
+  const cursor = document.createElement('span');
+  cursor.className = 'cursor';
+  term.appendChild(cursor);
+
+  playing = false;
+  if (btnPlay) {
+    btnPlay.disabled = false;
+    btnPlay.textContent = '↻ 重播';
+  }
+  if (playHint) playHint.textContent = '這是 2026-08-22 的真實執行紀錄';
+}
+
+btnPlay?.addEventListener('click', () => void playTerminal());
+
+// 第一次捲到 Proxy 那一段時自動播放，不用使用者自己發現有按鈕。
+if (term && 'IntersectionObserver' in window) {
+  const observer = new IntersectionObserver(
+    (entries) => {
+      for (const entry of entries) {
+        if (entry.isIntersecting && !hasPlayed) {
+          void playTerminal();
+          observer.disconnect();
+        }
+      }
+    },
+    { threshold: 0.35 },
+  );
+  observer.observe(term);
+}
+
+// 還沒播放前先放一段提示，不要是一塊空白的黑色方塊。
+if (term) {
+  term.innerHTML =
+    '<span class="note">（捲到這裡會自動播放，或按上面的按鈕）</span>';
+}
