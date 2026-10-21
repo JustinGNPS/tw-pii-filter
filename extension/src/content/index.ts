@@ -25,6 +25,8 @@ import {
 } from '../placeholder';
 import { isNewChatPath, reverseMap } from '../restore';
 import { filterEnabled, loadEnabledTypes } from '../settings';
+import { findNearMisses } from '../explain';
+import { showNearMissHint } from './hint';
 import { insertText, isEditable } from './insert';
 import { showPanel } from './panel';
 import { PageRestorer, RestoreToggle } from './restorer';
@@ -40,6 +42,8 @@ async function handleText(element: HTMLElement, text: string): Promise<void> {
   // 使用者在 popup 關掉的類型當作沒偵測到（見 settings.ts）
   const spans = filterEnabled(detected.spans, await loadEnabledTypes());
   const { combination_risk } = detected;
+  // 格式像、但檢核碼不對的號碼：照原文貼上，但要讓使用者知道我們看到了（見 explain.ts）
+  const nearMisses = findNearMisses(text, detected.spans);
   const risk = combination_risk ?? null;
 
   // 沒偵測到東西、也沒有組合風險，就完全不打擾使用者
@@ -52,6 +56,7 @@ async function handleText(element: HTMLElement, text: string): Promise<void> {
     isInserting = true;
     insertText(element, text);
     isInserting = false;
+    showNearMissHint(nearMisses);
     return;
   }
 
@@ -73,6 +78,7 @@ async function handleText(element: HTMLElement, text: string): Promise<void> {
   }
 
   if (decision.action === 'cancel') return;
+  showNearMissHint(nearMisses);
 
   isInserting = true;
   try {
