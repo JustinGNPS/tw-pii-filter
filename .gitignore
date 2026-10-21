@@ -52,3 +52,6 @@ Thumbs.db
 
 # ===== 打包產物（tools/pack_extension.py）=====
 release/
+
+# ===== 設定介面的存檔（proxy/settings.py，只有型別與策略，不含個資）=====
+.pii_settings.json

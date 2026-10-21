@@ -37,6 +37,7 @@ from proxy import (
     masker,
     media,
     risk,
+    settings,
     traffic,
 )
 from core.redact import restorer
@@ -64,7 +65,11 @@ async def lifespan(app: FastAPI):
     # 對照表只存在記憶體，隨行程結束消失 —— 真實個資不落地
     # 閒置逾時後會自動清空（決定 11），逾時秒數見 config.MAPPING_IDLE_TIMEOUT
     app.state.mapping = MappingTable(idle_timeout=config.MAPPING_IDLE_TIMEOUT)
+    # 設定介面存下來的設定優先於 .env（見 proxy/settings.py），要在印摘要之前套用
+    saved = settings.load_saved()
     logger.info("proxy 啟動\n%s", config.startup_summary())
+    if saved:
+        logger.info("已套用設定介面儲存的設定（%s，優先於 .env）", settings.SETTINGS_FILE.name)
     if not config.UPSTREAM_BASE_URL:
         logger.warning(forward.MISSING_UPSTREAM_MESSAGE)
     if not config.UPSTREAM_API_KEY:
