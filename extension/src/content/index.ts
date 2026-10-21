@@ -23,8 +23,10 @@ import {
   loadState,
   saveState,
 } from '../placeholder';
+import { isNewChatPath, reverseMap } from '../restore';
 import { insertText, isEditable } from './insert';
 import { showPanel } from './panel';
+import { PageRestorer, RestoreToggle } from './restorer';
 
 /** 防止我們自己插入的文字再次觸發攔截，造成無限迴圈。 */
 let isInserting = false;
@@ -80,15 +82,20 @@ async function handleText(element: HTMLElement, text: string): Promise<void> {
     const { maskedText, mapping } = maskText(text, decision.spans, allocator);
     insertText(element, maskedText);
 
-    void saveState(storageKey, allocator.toState());
     void recordMapping(mapping);
+    await saveState(storageKey, allocator.toState());
+    savedThisPage.add(storageKey);
+    void refreshRestore();
   } finally {
     isInserting = false;
   }
 }
 
 /**
- * 把對照表存進本地 storage，供第二版的還原機制使用。
+ * 把這次遮蔽的對照表留一份歷史紀錄（最近 50 次）。
+ *
+ * 還原本身不讀這份：還原用的是以對話為單位的配號狀態（見 refreshRestore），
+ * 作用域比這份精準 —— 這份是全部網站、全部對話混在一起的。
  *
  * ⚠️ 對照表本身就是一份集中的明文個資，是攻擊面。目前先明確標記
  * 資料結構與時間戳，加密與自動過期留待第二版還原機制一起處理
@@ -140,3 +147,99 @@ chrome.runtime.onMessage.addListener((message) => {
 
   void handleText(element, text);
 });
+
+// ─────────────────────────────────────────────────────────────
+// 還原：AI 回覆裡的佔位符在本地換回真值（雲端從頭到尾只看到佔位符）
+// ─────────────────────────────────────────────────────────────
+
+const RESTORE_PREF_KEY = 'restoreEnabled';
+
+/** 這個分頁存過配號狀態的 key。只有這些才有資格在換網址時被搬走（見 adoptNewChatState）。 */
+const savedThisPage = new Set<string>();
+
+let restoreEnabled = true;
+let lastHref = location.href;
+let mapSize = 0;
+let restoredCount = 0;
+
+const toggle = new RestoreToggle(() => void onToggleClick());
+const restorer = new PageRestorer(toggle.host, (count) => {
+  restoredCount = count;
+  toggle.render(mapSize > 0, restorer.enabled, restoredCount);
+});
+
+/** 重新載入「這個對話」的對照表，並依開關狀態套用。 */
+async function refreshRestore(): Promise<void> {
+  const state = await loadState(conversationKey(new URL(location.href)));
+  const map = reverseMap(state);
+  mapSize = map.size;
+  restorer.setMap(map);
+  if (restoreEnabled && mapSize > 0) restorer.enable();
+  toggle.render(mapSize > 0, restorer.enabled, restoredCount);
+}
+
+async function onToggleClick(): Promise<void> {
+  restoreEnabled = !restoreEnabled;
+  if (restoreEnabled) restorer.enable();
+  else restorer.disable();
+  toggle.render(mapSize > 0, restorer.enabled, restoredCount);
+  try {
+    await chrome.storage.local.set({ [RESTORE_PREF_KEY]: restoreEnabled });
+  } catch {
+    /* 偏好設定存不進去不影響功能 */
+  }
+}
+
+/**
+ * 新對話送出第一則訊息後網址會從 `/` 變成 `/c/<id>`（各站寫法見 isNewChatPath），
+ * 在新對話頁存下的配號要跟著搬到新網址，否則還原會找不到對照表。
+ *
+ * 三個條件全部成立才搬，任何一個不成立都寧可不還原，也不要拿錯人的對照表：
+ *  1. 舊網址是新對話頁
+ *  2. 舊網址那份狀態是**這個分頁**剛存的（不是別的分頁留下的）
+ *  3. 新網址還沒有自己的狀態
+ */
+async function adoptNewChatState(prev: URL, next: URL): Promise<void> {
+  if (prev.host !== next.host || !isNewChatPath(prev.pathname)) return;
+  const prevKey = conversationKey(prev);
+  if (!savedThisPage.has(prevKey)) return;
+  const nextKey = conversationKey(next);
+  const nextState = await loadState(nextKey);
+  if (Object.keys(nextState.assigned).length > 0) return;
+
+  const prevState = await loadState(prevKey);
+  await saveState(nextKey, prevState);
+  savedThisPage.delete(prevKey);
+  savedThisPage.add(nextKey);
+  try {
+    await chrome.storage.local.remove(prevKey);
+  } catch {
+    /* 舊的那份會在 12 小時後過期 */
+  }
+}
+
+async function initRestore(): Promise<void> {
+  try {
+    const stored = await chrome.storage.local.get(RESTORE_PREF_KEY);
+    if (stored[RESTORE_PREF_KEY] === false) restoreEnabled = false;
+  } catch {
+    /* 讀不到就用預設（開啟） */
+  }
+  await refreshRestore();
+
+  // 三個網站都是單頁應用，換對話不會重新載入頁面，只能輪詢網址
+  window.setInterval(() => {
+    if (location.href === lastHref) return;
+    const prev = new URL(lastHref);
+    lastHref = location.href;
+    void adoptNewChatState(prev, new URL(lastHref)).then(refreshRestore);
+  }, 1000);
+
+  // 同一個對話開在兩個分頁時，另一邊遮蔽的新值這邊也要能還原
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area !== 'local') return;
+    if (conversationKey(new URL(location.href)) in changes) void refreshRestore();
+  });
+}
+
+void initRestore();

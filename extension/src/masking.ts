@@ -1,9 +1,8 @@
 /**
  * 遮蔽與對照表建立。
  *
- * 依照專題規劃「第一版只做偵測 + 警告，第二版才做還原」的分階段策略，
  * 這裡負責的是**送出前**的遮蔽：把偵測到的 span 換成佔位符，並同時
- * 產出本地對照表供第二版的還原機制使用（對照表絕不外傳）。
+ * 產出本地對照表（對照表絕不外傳）。AI 回覆的還原在 `restore.ts`。
  *
  * ⚠️ 佔位符**不使用** `span.replacement`，改由 {@link PlaceholderAllocator} 配號，
  * 原因見 `src/placeholder.ts` 的說明（`detect_all()` 每次重新編號，跨次呼叫
@@ -64,7 +63,7 @@ export function isKnownType(type: PiiType): boolean {
   return type in TYPE_META;
 }
 
-/** 對照表的一筆紀錄：佔位符 ↔ 原文。第二版還原機制會用到。 */
+/** 對照表的一筆紀錄：佔位符 ↔ 原文。 */
 export interface MappingEntry {
   placeholder: string;
   original: string;
