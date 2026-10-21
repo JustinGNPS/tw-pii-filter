@@ -24,6 +24,7 @@ import {
   saveState,
 } from '../placeholder';
 import { isNewChatPath, reverseMap } from '../restore';
+import { filterEnabled, loadEnabledTypes } from '../settings';
 import { insertText, isEditable } from './insert';
 import { showPanel } from './panel';
 import { PageRestorer, RestoreToggle } from './restorer';
@@ -35,7 +36,10 @@ let isInserting = false;
 let panelOpen = false;
 
 async function handleText(element: HTMLElement, text: string): Promise<void> {
-  const { spans, combination_risk } = detectAll(text);
+  const detected = detectAll(text);
+  // 使用者在 popup 關掉的類型當作沒偵測到（見 settings.ts）
+  const spans = filterEnabled(detected.spans, await loadEnabledTypes());
+  const { combination_risk } = detected;
   const risk = combination_risk ?? null;
 
   // 沒偵測到東西、也沒有組合風險，就完全不打擾使用者
