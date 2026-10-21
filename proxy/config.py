@@ -192,6 +192,30 @@ if RISK_REDUCTION_POLICY not in _RISK_REDUCTION_POLICIES:
     )
 
 
+# 圖片與 PDF（見 proxy/media.py） ------------------------------------------
+#
+# agent 讀到圖片或 PDF 時，內容是 base64 編碼的二進位資料，文字層的偵測
+# 看不到裡面的個資。在此之前 Claude Code 路徑遇到就回 501（而且每輪重送歷史，
+# 整個工作階段卡死），OpenAI 格式則原封不動送出、沒有任何警告。
+#
+#   PII_IMAGE_POLICY     remove（預設）：換成一行說明，AI 知道這裡原本有圖
+#                        allow：照原樣送出（使用者自行承擔，log 會提醒）
+#   PII_DOCUMENT_POLICY  extract（預設）：本機抽出文字 → 照一般文字遮蔽 → 取代原 PDF
+#                        remove：換成一行說明
+#
+# 預設值選「保護優先」：看不見內容的東西，寧可不送。
+IMAGE_POLICY = os.getenv("PII_IMAGE_POLICY", "remove").strip().lower()
+DOCUMENT_POLICY = os.getenv("PII_DOCUMENT_POLICY", "extract").strip().lower()
+IMAGE_POLICIES = ("remove", "allow")
+DOCUMENT_POLICIES = ("extract", "remove")
+if IMAGE_POLICY not in IMAGE_POLICIES:
+    raise ValueError(f"PII_IMAGE_POLICY={IMAGE_POLICY!r} 無效；可用值：{', '.join(IMAGE_POLICIES)}")
+if DOCUMENT_POLICY not in DOCUMENT_POLICIES:
+    raise ValueError(
+        f"PII_DOCUMENT_POLICY={DOCUMENT_POLICY!r} 無效；可用值：{', '.join(DOCUMENT_POLICIES)}"
+    )
+
+
 def startup_summary() -> str:
     """啟動時印的設定摘要 —— 只印變數名稱與 base URL，**不印金鑰內容**。"""
     key_status = (
@@ -215,6 +239,8 @@ def startup_summary() -> str:
         f"語意層（NER）：{ner_status}\n"
         f"組合風險提示：{'已啟用' if ENABLE_RISK_WARNING else '未啟用'}\n"
         f"殘餘風險自動降階：{RISK_REDUCTION_POLICY}\n"
+        f"圖片：{'移除（換成說明文字）' if IMAGE_POLICY == 'remove' else '照原樣送出（不檢查）'}｜"
+        f"PDF：{'本機轉文字後遮蔽' if DOCUMENT_POLICY == 'extract' else '移除'}\n"
         f"對照表閒置逾時：{f'{MAPPING_IDLE_TIMEOUT:.0f} 秒' if MAPPING_IDLE_TIMEOUT else '停用'}\n"
         f"示範頁面：{'已啟用（/demo）' if ENABLE_DEMO else '未啟用（設 PII_ENABLE_DEMO=1 開啟）'}"
     )

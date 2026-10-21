@@ -164,9 +164,29 @@ def _wait_then_open(port: int, open_browser: bool, proc: subprocess.Popen) -> No
     print(f"\n[警告] 等了 {READY_TIMEOUT_SECONDS} 秒 proxy 仍未就緒，請看上方 log 的錯誤訊息。")
 
 
+# proxy/requirements.txt 裡執行期需要的模組（import 名稱）。
+# 「啟動.bat」只在 .venv 不存在時才安裝套件；之後 requirements.txt 新增套件
+# （例如 pypdf），已經建好的 .venv 不會自己長出來，所以每次啟動前補一次。
+_RUNTIME_MODULES = ("fastapi", "uvicorn", "httpx", "dotenv", "pypdf")
+
+
+def _ensure_requirements() -> None:
+    missing = [m for m in _RUNTIME_MODULES if importlib.util.find_spec(m) is None]
+    if not missing:
+        return
+    print(f"\n[更新] 補裝缺少的套件：{'、'.join(missing)}（只有這次需要）...")
+    subprocess.run(
+        [sys.executable, "-m", "pip", "install", "--disable-pip-version-check", "-q",
+         "-r", str(REPO_ROOT / "proxy" / "requirements.txt")],
+        cwd=REPO_ROOT,
+        check=False,
+    )
+
+
 def run_proxy(port: int, ner_flag: bool | None, open_browser: bool) -> int:
     """選單 [1]：啟動 proxy 與示範頁面，前景執行到使用者按 Ctrl+C。"""
     _ensure_env_file()
+    _ensure_requirements()
 
     if _port_in_use(port):
         if _healthz(port) is not None:

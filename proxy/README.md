@@ -299,6 +299,8 @@ python -m venv .venv
 | 啟用語意層（NER） | `PII_ENABLE_NER` | 關閉（僅規則層） |
 | 啟用組合風險提示 | `PII_ENABLE_RISK_WARNING` | 開啟 |
 | 對照表閒置逾時（秒，`0` 代表停用） | `PROXY_MAPPING_IDLE_TIMEOUT` | `1800`（30 分鐘） |
+| 圖片處理（`remove`／`allow`） | `PII_IMAGE_POLICY` | `remove`：換成說明文字（圖片內容看不到，寧可不送） |
+| PDF 處理（`extract`／`remove`） | `PII_DOCUMENT_POLICY` | `extract`：本機轉文字後照常遮蔽（見 `proxy/media.py`） |
 
 上游 base URL 沒設定時，proxy **仍會正常啟動**（啟動摘要會印一行 WARNING），但每個轉發請求都會回 `502` 與一則指出該設哪個變數的訊息：
 

@@ -766,7 +766,7 @@ A 在 PR #47（issue #27）替規則層加了全形→半形正規化之後，`d
 | Continue | `~/.continue/config.yaml` 自訂 `provider: openai` + `apiBase` | function calling | **已實測通過**（再次驗證 tool_calls 還原修復不是只對 OpenCode 有效） |
 | Cline | GUI 設定選 **OpenAI Compatible**，填 Base URL/API Key/Model | function calling | **已實測通過**（第三款驗證同一個修復） |
 | Codex | `config.toml` 自訂 provider（`wire_api = "responses"`） | **Responses API**（`POST /v1/responses`，欄位結構完全不同） | **已實測通過**（遮蔽與還原兩側原本都靜默失效，見下；**寫檔路徑 08-22 補驗完成**，見下方註記） |
-| Claude Code | `ANTHROPIC_BASE_URL` | Anthropic Messages API（欄位結構完全不同，另有協定翻譯層） | **已實測通過**（純文字對話 + 工具呼叫，含真串流；圖片/文件附件尚未支援，見下） |
+| Claude Code | `ANTHROPIC_BASE_URL` | Anthropic Messages API（欄位結構完全不同，另有協定翻譯層） | **已實測通過**（純文字對話 + 工具呼叫，含真串流；PDF 轉文字遮蔽、圖片預設移除，見下） |
 | **Cursor** | — | 廠商代管後端，無自訂位址欄位 | **不支援**（見上「BYOK vs. 代管帳號」） |
 
 「編輯機制」這一欄是 OpenCode 測試後才加的——它正是還原邏輯要走哪條
@@ -829,8 +829,13 @@ Claude Code 走的是 Anthropic Messages API（`POST /v1/messages`），跟其�
 `to_openai_request()`（Anthropic → OpenAI，含 `tool_use`/`tool_result`/
 `tools[]` 的轉換）、`response_to_event_stream()`（非串流回覆包成 Anthropic
 SSE，簡化版）、`AnthropicStreamTranslator`（真串流版，邊收 AIR 的 OpenAI
-格式 delta 邊即時翻譯成 Anthropic 事件）。目前還不支援圖片／文件附件
-（`image`/`document` block），遇到會回 501 誠實拒絕，不硬翻。
+格式 delta 邊即時翻譯成 Anthropic 事件）。圖片／文件附件（`image`/`document`
+block）由 `proxy/media.py` 在遮蔽前處理（2026-10-21，見已知限制與未決表）。
+
+> 2026-10-21 補記：原本遇到附件回 501，但 Claude Code 每輪重送完整歷史，
+> **出現過一次附件之後每個請求都會失敗**，整個工作階段卡死 —— 比「不支援」
+> 嚴重得多。同時 OpenAI 格式的 `image_url` 是原封不動送出、沒有警告。
+> 現在兩條路徑共用同一套規則：PDF 本機轉文字後遮蔽，圖片預設換成說明文字。
 
 **為什麼 `tool_use.input` 一定要重新掃**：assistant 的 `tool_use` block
 一旦被 proxy 還原、送回 Claude Code，裡面就是真值。Claude Code 每次請求
@@ -969,7 +974,7 @@ TypeScript 實作，**不會直接 import 這份程式碼**。它的角色是「
 | 項目 | 說明 |
 |---|---|
 | 共用模組的位置 | 見「對 C」，尚未有結論 |
-| Claude Code 的圖片／文件附件 | `image`/`document` block 還不會翻譯，遇到誠實回報「還沒支援」。要不要做取決於 demo 需不需要 |
+| 圖片內容的個資（OCR） | 2026-10-21 起圖片預設移除（`PII_IMAGE_POLICY=remove`），PDF 本機轉文字後遮蔽。圖片裡的文字要靠 OCR 才看得到，模型與延遲成本高，未做 |
 | `detect_all().combination_risk` 與載體自算的關係 | A 在 PR #24 讓 `detect_all()` 回傳原文的組合風險，proxy 則另外算遮蔽後的殘餘風險，同一段文字兩個數字不同（1.00 vs 0.70）。已在 PR #25 請 A 裁示，見決定 12 |
 
 ~~其他 agent 實測~~ —— 已解決：相容性表上六款（Aider／OpenCode／Continue／Cline／Codex／Claude Code）全部實測通過，Cursor 誠實列為不支援。
