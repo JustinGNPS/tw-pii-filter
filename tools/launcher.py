@@ -1,6 +1,13 @@
-"""一鍵啟動 API Proxy 與本機示範頁面（由 repo 根目錄的「啟動.bat」呼叫）。
+"""一鍵啟動器（由 repo 根目錄的「啟動.bat」呼叫）。
 
-給「不想記指令」的人用：決賽現場、組員、教授試用。做的事依序是：
+給「不想記指令」的人用：決賽現場、組員、教授試用。雙擊後出現選單：
+
+  [1] 啟動 Proxy + 示範頁   [2] 安裝或更新瀏覽器擴充
+  [3] 開啟線上 Demo 網站     [4] 開啟使用說明書
+
+帶任何參數執行（例如 `啟動.bat --port 8010`）就跳過選單、直接走 [1]。
+
+[1] 做的事依序是：
 
 1. 沒有 `.env` 就從 `tools/env.template` 複製一份（**從不讀取或印出 .env 的內容**）
 2. 偵測語意層套件有沒有裝，有裝就問要不要開；沒裝就問要不要現在裝
@@ -36,6 +43,11 @@ ENV_FILE = REPO_ROOT / ".env"
 ENV_TEMPLATE = REPO_ROOT / "tools" / "env.template"
 NER_REQUIREMENTS = REPO_ROOT / "core" / "ner" / "requirements.txt"
 HOST = "127.0.0.1"
+EXT_DIR = REPO_ROOT / "extension"
+EXT_DIST = EXT_DIR / "dist"
+DEMO_SITE_URL = "https://justingnps.github.io/tw-pii-filter/"
+# 說明書優先開 PDF（Windows 上 .md 多半會用記事本開，排版全失）
+MANUAL_CANDIDATES = (REPO_ROOT / "docs" / "使用說明書.pdf", REPO_ROOT / "docs" / "使用說明書.md")
 
 # 語意層第一次載入要讀 389 MB 權重；首次執行還可能要下載。給足時間。
 READY_TIMEOUT_SECONDS = 300
@@ -43,7 +55,7 @@ READY_TIMEOUT_SECONDS = 300
 
 def _print_header() -> None:
     print("=" * 60)
-    print("  本地端敏感資訊過濾機制  ── API Proxy 啟動器")
+    print("  本地端敏感資訊過濾機制 ── 私密大師")
     print("=" * 60)
 
 
@@ -152,8 +164,149 @@ def _wait_then_open(port: int, open_browser: bool, proc: subprocess.Popen) -> No
     print(f"\n[警告] 等了 {READY_TIMEOUT_SECONDS} 秒 proxy 仍未就緒，請看上方 log 的錯誤訊息。")
 
 
+def run_proxy(port: int, ner_flag: bool | None, open_browser: bool) -> int:
+    """選單 [1]：啟動 proxy 與示範頁面，前景執行到使用者按 Ctrl+C。"""
+    _ensure_env_file()
+
+    if _port_in_use(port):
+        if _healthz(port) is not None:
+            print(f"\n[提示] proxy 已經在埠 {port} 執行中，直接開啟示範頁面。")
+            if open_browser:
+                webbrowser.open(f"http://{HOST}:{port}/demo")
+            return 0
+        print(f"\n[錯誤] 埠 {port} 被其他程式佔用。可以改用：啟動.bat --port 8010")
+        return 1
+
+    use_ner = _decide_ner(ner_flag)
+
+    env = os.environ.copy()
+    env["PII_ENABLE_DEMO"] = "1"
+    env["PII_ENABLE_NER"] = "1" if use_ner else "0"
+    env.setdefault("PYTHONIOENCODING", "utf-8")
+
+    print(f"\n啟動中（語意層：{'開啟，載入模型需要一點時間' if use_ner else '關閉'}）...\n")
+    proc = subprocess.Popen(
+        [sys.executable, "-m", "uvicorn", "proxy.main:app",
+         "--host", HOST, "--port", str(port)],
+        cwd=REPO_ROOT,
+        env=env,
+    )
+    threading.Thread(
+        target=_wait_then_open, args=(port, open_browser, proc), daemon=True
+    ).start()
+
+    try:
+        return proc.wait()
+    except KeyboardInterrupt:
+        # Ctrl+C 會同時送給子行程，uvicorn 自己會優雅關閉；這裡只等它結束。
+        try:
+            return proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            proc.terminate()
+            return 1
+
+
+def _copy_to_clipboard(text: str) -> bool:
+    # 不用 clip.exe：它要靠 BOM 才認得 UTF-16，而 BOM 會跟著被貼上，
+    # 路徑前面多一個看不見的字元，選資料夾的視窗就找不到路徑。
+    # 值走環境變數傳給 PowerShell，避開中文與括號的引號跳脫問題。
+    try:
+        subprocess.run(
+            ["powershell", "-NoProfile", "-Command", "Set-Clipboard -Value $env:TW_PII_CLIP"],
+            env={**os.environ, "TW_PII_CLIP": text},
+            check=True,
+            timeout=15,
+        )
+        return True
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def install_extension() -> None:
+    """選單 [2]：build 擴充，然後把「載入未封裝項目」要用到的東西都準備好。
+
+    Chrome 的安全設計不允許任何程式替使用者按下「載入」，所以最後一步一定要
+    自己點；這裡能做的是把其餘步驟全部省掉。
+    """
+    npm = shutil.which("npm")
+    if npm is None:
+        print("\n[錯誤] 找不到 Node.js。請到 https://nodejs.org/ 安裝 LTS 版後再選一次。")
+        print("       （或請組員用 tools/pack_extension.py 打包 zip 給你，解壓後直接載入）")
+        return
+    try:
+        if not (EXT_DIR / "node_modules").exists():
+            print("\n首次建置：安裝相依套件（約 30 秒）...")
+            subprocess.run([npm, "ci"], cwd=EXT_DIR, check=True)
+        print("\n建置擴充中...")
+        subprocess.run([npm, "run", "build"], cwd=EXT_DIR, check=True)
+    except subprocess.CalledProcessError:
+        print("\n[錯誤] 建置失敗，請把上面的訊息截圖給開發者。")
+        return
+
+    copied = _copy_to_clipboard(str(EXT_DIST))
+    os.startfile(EXT_DIST)  # 開檔案總管，讓使用者看到要選的是哪個資料夾
+    # chrome:// 網址不能用 webbrowser 開（不是一般網址），交給 Windows 的 start 指令
+    subprocess.run(["cmd", "/c", "start", "", "chrome", "chrome://extensions"], check=False)
+
+    print("\n" + "-" * 60)
+    print("  [OK] 擴充已建置完成。已幫你打開 Chrome 的擴充功能頁面，接下來：\n")
+    print("  第一次安裝：")
+    print("    1. 打開右上角「開發人員模式」")
+    print("    2. 按左上角「載入未封裝項目」")
+    print(f"    3. 選這個資料夾：{EXT_DIST}")
+    if copied:
+        print("       （路徑已複製到剪貼簿，在選資料夾視窗上方的網址列按 Ctrl+V 即可）")
+    print("\n  已經裝過、只是更新：在擴充卡片上按「重新載入」（圓形箭頭）就好。")
+    print("\n  裝好後打開 ChatGPT / Claude / Gemini，貼上含個資的文字就會跳出確認面板。")
+    print("  （Chrome 沒有自動打開的話，手動在網址列輸入 chrome://extensions ）")
+    print("-" * 60)
+
+
+def open_manual() -> None:
+    """選單 [4]。"""
+    for path in MANUAL_CANDIDATES:
+        if path.exists():
+            os.startfile(path)
+            print(f"\n已開啟：{path}")
+            return
+    print("\n[提示] 說明書還沒產生（docs/使用說明書.pdf）。")
+
+
+MENU = """
+  [1] 啟動 Proxy + 示範頁（試打台／即時監看／現況總覽）
+      ─ 保護 AI coding agent，也是現場展示用的主畫面
+  [2] 安裝或更新瀏覽器擴充
+      ─ 讓 ChatGPT / Claude / Gemini 貼上時自動攔截、回覆自動還原
+  [3] 開啟線上 Demo 網站
+  [4] 開啟使用說明書
+  [Q] 離開
+"""
+
+
+def menu() -> int:
+    while True:
+        print(MENU)
+        try:
+            choice = input("請選擇：").strip().lower()
+        except EOFError:
+            return 0
+        if choice == "1":
+            return run_proxy(8000, None, True)
+        if choice == "2":
+            install_extension()
+        elif choice == "3":
+            webbrowser.open(DEMO_SITE_URL)
+            print(f"\n已開啟：{DEMO_SITE_URL}")
+        elif choice == "4":
+            open_manual()
+        elif choice in ("q", "0"):
+            return 0
+        else:
+            print("\n請輸入 1、2、3、4 或 Q。")
+
+
 def main() -> int:
-    parser = argparse.ArgumentParser(description="一鍵啟動 API Proxy 與本機示範頁面")
+    parser = argparse.ArgumentParser(description="一鍵啟動器；不帶參數會顯示選單")
     parser.add_argument("--port", type=int, default=8000)
     ner = parser.add_mutually_exclusive_group()
     ner.add_argument("--ner", dest="ner", action="store_true", default=None, help="開啟語意層，不詢問")
@@ -168,44 +321,9 @@ def main() -> int:
             stream.reconfigure(errors="replace", line_buffering=True)
 
     _print_header()
-    _ensure_env_file()
-
-    if _port_in_use(args.port):
-        if _healthz(args.port) is not None:
-            print(f"\n[提示] proxy 已經在埠 {args.port} 執行中，直接開啟示範頁面。")
-            if not args.no_browser:
-                webbrowser.open(f"http://{HOST}:{args.port}/demo")
-            return 0
-        print(f"\n[錯誤] 埠 {args.port} 被其他程式佔用。可以改用：啟動.bat --port 8010")
-        return 1
-
-    use_ner = _decide_ner(args.ner)
-
-    env = os.environ.copy()
-    env["PII_ENABLE_DEMO"] = "1"
-    env["PII_ENABLE_NER"] = "1" if use_ner else "0"
-    env.setdefault("PYTHONIOENCODING", "utf-8")
-
-    print(f"\n啟動中（語意層：{'開啟，載入模型需要一點時間' if use_ner else '關閉'}）...\n")
-    proc = subprocess.Popen(
-        [sys.executable, "-m", "uvicorn", "proxy.main:app",
-         "--host", HOST, "--port", str(args.port)],
-        cwd=REPO_ROOT,
-        env=env,
-    )
-    threading.Thread(
-        target=_wait_then_open, args=(args.port, not args.no_browser, proc), daemon=True
-    ).start()
-
-    try:
-        return proc.wait()
-    except KeyboardInterrupt:
-        # Ctrl+C 會同時送給子行程，uvicorn 自己會優雅關閉；這裡只等它結束。
-        try:
-            return proc.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            proc.terminate()
-            return 1
+    if len(sys.argv) > 1:
+        return run_proxy(args.port, args.ner, not args.no_browser)
+    return menu()
 
 
 if __name__ == "__main__":
