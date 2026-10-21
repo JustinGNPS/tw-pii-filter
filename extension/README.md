@@ -117,6 +117,55 @@ TypeScript 版已支援注入（`extractAge(text, today)`），`tests/fixtures/p
 
 `COMPANY` 正是需要區分兩者的例子：留在白名單內（權重 0.15 必須計入組合風險，排除會漏報），但在面板上可以預設不勾選。
 
+## 語意層延遲實測頁（R1 / R2）
+
+風險清單 R1（MV3 能不能載入模型）與 R2（延遲會不會超過 1 秒）一直只有推論、
+沒有實測數字。`benchmark.html` 就是用來產生那個數字的。
+
+```bash
+npm run build
+```
+
+到 `chrome://extensions` 載入 `dist/`，然後開 `chrome-extension://<擴充ID>/benchmark.html`。
+選後端（WASM / WebGPU）、量化型別與文字長度，按「開始實測」。
+
+**第一次會下載模型（int8 約 170 MB），之後有瀏覽器快取。**
+
+### 這一頁刻意用現成的 ONNX 模型，不是 D 的模型
+
+轉換 `gyr66/bert-base-chinese-finetuned-ner` 要先裝 torch + optimum（約 2.5 GB、
+半天工時）。但如果答案是「瀏覽器要 8 秒」，那半天就白花了——**先用架構相同的
+現成模型測天花板，有希望再投入轉檔**。
+
+`Xenova/bert-base-multilingual-cased-ner-hrl` 與 D 用的模型同為 BERT-base
+（12 層、768 維），推論計算量一致。
+
+⚠️ 解讀數字時要記得的差異：多語版詞彙表大得多（約 12 萬 vs 中文版約 2 萬），
+**模型檔比較大，所以「下載 / 載入」的數字偏悲觀，但「推論」的數字具代表性**。
+頁面會同時回報實際 token 數，讓數字可以跟 PyTorch 端正確比較。
+
+### R1 的三個地雷，這一頁都踩過了
+
+| 地雷 | 處理方式 |
+|---|---|
+| MV3 CSP 不允許遠端腳本 | ORT 的 WASM 檔由 `build.mjs` 打包進 `dist/ort/`，用 `env.backends.onnx.wasm.wasmPaths` 指過去。transformers.js 預設走 CDN，在擴充裡一定失敗 |
+| 需要 `wasm-unsafe-eval` | manifest 的 `content_security_policy.extension_pages` 明確宣告 |
+| 模型要從 HuggingFace 下載 | `host_permissions` 加上 `huggingface.co` 與 CDN 網域 |
+
+實測頁必須打包成 **ESM**（`build.mjs` 單獨處理）：transformers.js 內部用動態
+`import()` 載入 ORT glue，打成 IIFE 會在執行期壞掉。
+
+### 怎麼解讀結果
+
+| 推論中位數 | 結論 |
+|---|---|
+| > 5 秒 | 同步跑完整 NER 不可行，走報告既定退路（規則層 + 警告） |
+| 1～5 秒 | 超過 R2 門檻，同步不可行，但**分段顯示**可行（規則層 0.11 ms 先開面板，語意層算完再補） |
+| < 1 秒 | 同步跑語意層可行 |
+
+**失敗本身也是答案。** 如果載不起來，log 會指出是 CSP、WASM 路徑、WebGPU 不支援
+還是別的原因——那就是 R1 的結論，一樣可以寫進報告。
+
 ## 語意層的技術風險（R1 / R2）
 
 ### 延遲：這是目前最大的問題
