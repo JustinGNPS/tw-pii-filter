@@ -49,3 +49,6 @@ Thumbs.db
 .vscode/
 .idea/
 *.swp
+
+# ===== 打包產物（tools/pack_extension.py）=====
+release/
