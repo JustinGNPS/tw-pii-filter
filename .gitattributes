@@ -1,2 +1,3 @@
 # Windows 批次檔必須是 CRLF，LF 會讓 cmd 的 goto 標籤偶發找不到
 *.bat text eol=crlf
+*.pdf binary
