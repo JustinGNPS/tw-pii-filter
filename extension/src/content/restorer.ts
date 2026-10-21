@@ -50,10 +50,20 @@ export class PageRestorer {
   private map: ReverseMap = new Map();
   private onChange: (restoredCount: number) => void;
   private ownHost: Element | null;
+  private root: Node;
 
-  constructor(ownHost: Element | null, onChange: (restoredCount: number) => void) {
+  /**
+   * @param root 只處理這個節點底下的文字。擴充用整頁（預設）；展示網站只還原
+   *             模擬的聊天視窗，不能動到旁邊刻意顯示佔位符的「AI 收到的版本」欄位。
+   */
+  constructor(
+    ownHost: Element | null,
+    onChange: (restoredCount: number) => void,
+    root: Node = document.body,
+  ) {
     this.ownHost = ownHost;
     this.onChange = onChange;
+    this.root = root;
   }
 
   get enabled(): boolean {
@@ -63,7 +73,7 @@ export class PageRestorer {
   /** 換一份對照表（換對話、或剛遮蔽了新的值），開著的話立刻重掃。 */
   setMap(map: ReverseMap): void {
     this.map = map;
-    if (this.enabled) this.sweep(document.body);
+    if (this.enabled) this.sweep(this.root);
   }
 
   enable(): void {
@@ -76,8 +86,8 @@ export class PageRestorer {
       }
       this.scheduleFlush();
     });
-    this.observer.observe(document.body, { subtree: true, childList: true, characterData: true });
-    this.sweep(document.body);
+    this.observer.observe(this.root, { subtree: true, childList: true, characterData: true });
+    this.sweep(this.root);
   }
 
   /** 關掉並把畫面換回佔位符（AI 實際看到的版本）。 */
