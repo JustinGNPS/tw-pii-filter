@@ -34,6 +34,32 @@ const ENTRIES = {
   popup: path.join(ROOT, 'src/popup/index.ts'),
 };
 
+/**
+ * 語意層延遲實測頁（R1 / R2）。
+ *
+ * 與上面三支分開建置，因為它必須是 **ESM**：transformers.js 內部用動態
+ * `import()` 載入 onnxruntime 的 WASM glue，打成 IIFE 會在執行期壞掉。
+ * 這支只在實測時載入，不影響正式的擴充路徑。
+ */
+const BENCHMARK_ENTRY = path.join(ROOT, 'src/benchmark/index.ts');
+
+/**
+ * onnxruntime-web 的 WASM 檔案。
+ *
+ * **MV3 的 CSP 不允許載入遠端腳本**，而 transformers.js 預設會去 CDN 抓
+ * ORT 的 wasm glue——那在擴充裡一定失敗。必須把檔案打包進擴充，
+ * 再用 `env.backends.onnx.wasm.wasmPaths` 指到擴充自己的路徑。
+ *
+ * 這件事本身就是風險清單 R1 要驗證的東西之一。
+ */
+const ORT_DIST = path.join(ROOT, 'node_modules/onnxruntime-web/dist');
+const ORT_FILES = [
+  'ort-wasm-simd-threaded.wasm', // CPU（WASM）後端
+  'ort-wasm-simd-threaded.mjs',
+  'ort-wasm-simd-threaded.jsep.wasm', // WebGPU（JSEP）後端
+  'ort-wasm-simd-threaded.jsep.mjs',
+];
+
 async function build() {
   await rm(OUT_DIR, { recursive: true, force: true });
   await mkdir(OUT_DIR, { recursive: true });
@@ -57,6 +83,28 @@ async function build() {
   } else {
     await context.rebuild();
     await context.dispose();
+  }
+
+  // 實測頁單獨建置成 ESM（理由見 BENCHMARK_ENTRY 的說明）
+  await esbuild.build({
+    entryPoints: [BENCHMARK_ENTRY],
+    outfile: path.join(OUT_DIR, 'benchmark.js'),
+    bundle: true,
+    format: 'esm',
+    target: ['chrome114'],
+    platform: 'browser',
+    charset: 'utf8',
+    logLevel: 'info',
+    sourcemap: WATCH ? 'inline' : false,
+    minify: !WATCH,
+    // transformers.js 在 node 下會去載 onnxruntime-node，明確挑瀏覽器進入點
+    conditions: ['browser', 'import'],
+  });
+
+  // ORT 的 WASM 檔必須在擴充本地（MV3 CSP 不允許遠端腳本）
+  await mkdir(path.join(OUT_DIR, 'ort'), { recursive: true });
+  for (const file of ORT_FILES) {
+    await cp(path.join(ORT_DIST, file), path.join(OUT_DIR, 'ort', file));
   }
 
   // manifest.json、popup.html 等靜態檔直接複製

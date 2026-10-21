@@ -13,6 +13,7 @@
     "parity:gen": "python ../tools/gen_parity_expected.py"
   },
   "devDependencies": {
+    "@huggingface/transformers": "4.3.1",
     "@types/chrome": "0.0.268",
     "esbuild": "0.21.5",
     "typescript": "5.5.4",
