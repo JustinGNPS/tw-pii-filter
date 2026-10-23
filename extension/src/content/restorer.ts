@@ -1,16 +1,8 @@
 /**
- * 在 AI 網頁上把佔位符換回真值，並提供「切換成 AI 看到的版本」的開關。
+ * 安全回覆檢視器：辨識 AI 網頁上的佔位符，但不把明文寫回網站 DOM。
  *
- * ## 為什麼只改 Text 節點的內容，不拆節點、不包 <mark>
- *
- * ChatGPT / Claude / Gemini 的對話區都是 React 管的。React 手上握著每個
- * Text 節點的參考，之後串流更新時直接改它的 nodeValue。如果我們把節點拆開
- * 或包一層 <mark>，React 改到的是已經被拆掉的那半，畫面會出現重複或殘缺的字。
- * 只改 nodeValue 則與 React 自己的更新方式相同，下一次 React 覆寫回佔位符時，
- * MutationObserver 會再還原一次。
- *
- * 標色改用 CSS Custom Highlight API（`CSS.highlights`）：只登記 Range，
- * 完全不動 DOM 結構。不支援的瀏覽器就只還原、不標色。
+ * 明文只會交給擴充建立的 closed Shadow DOM 顯示。網站本身始終保留
+ * `[NAME_1]` 這類佔位符，避免頁面腳本、分析 SDK 或 React 狀態重新取得真值。
  *
  * ## 絕不碰輸入框
  *
@@ -21,7 +13,6 @@
 
 import { restoreString, type ReverseMap } from '../restore';
 
-const HIGHLIGHT_NAME = 'tw-pii-restored';
 const SKIP_SELECTOR = 'textarea, input, script, style, noscript, [contenteditable=""], [contenteditable="true"], [contenteditable="plaintext-only"]';
 
 /** 這個 Text 節點能不能動。輸入框、程式碼標籤、我們自己的 UI 都不能。 */
@@ -35,10 +26,11 @@ export function isRestorableTextNode(node: Node, ownHost: Element | null): boole
 }
 
 interface Touched {
-  /** 我們改之前的內容（佔位符版本） */
+  /** 網站 DOM 裡的佔位符版本。 */
   masked: string;
-  /** 我們寫進去的內容（真值版本） */
+  /** 只在 closed Shadow DOM 顯示的本機還原版本。 */
   restored: string;
+  restoredCount: number;
 }
 
 export class PageRestorer {
@@ -46,9 +38,8 @@ export class PageRestorer {
   private touched = new Map<Text, Touched>();
   private pending = new Set<Node>();
   private flushTimer: number | null = null;
-  private highlight: Highlight | null = null;
   private map: ReverseMap = new Map();
-  private onChange: (restoredCount: number) => void;
+  private onChange: (restoredCount: number, snippets: string[]) => void;
   private ownHost: Element | null;
   private root: Node;
 
@@ -58,7 +49,7 @@ export class PageRestorer {
    */
   constructor(
     ownHost: Element | null,
-    onChange: (restoredCount: number) => void,
+    onChange: (restoredCount: number, snippets: string[]) => void,
     root: Node = document.body,
   ) {
     this.ownHost = ownHost;
@@ -73,12 +64,12 @@ export class PageRestorer {
   /** 換一份對照表（換對話、或剛遮蔽了新的值），開著的話立刻重掃。 */
   setMap(map: ReverseMap): void {
     this.map = map;
+    this.touched.clear();
     if (this.enabled) this.sweep(this.root);
   }
 
   enable(): void {
     if (this.enabled) return;
-    this.ensureHighlight();
     this.observer = new MutationObserver((records) => {
       for (const record of records) {
         if (record.type === 'characterData') this.pending.add(record.target);
@@ -90,20 +81,15 @@ export class PageRestorer {
     this.sweep(this.root);
   }
 
-  /** 關掉並把畫面換回佔位符（AI 實際看到的版本）。 */
+  /** 關掉本機檢視器；網站 DOM 從頭到尾都不需要改動。 */
   disable(): void {
     this.observer?.disconnect();
     this.observer = null;
     if (this.flushTimer !== null) window.clearTimeout(this.flushTimer);
     this.flushTimer = null;
     this.pending.clear();
-    for (const [node, info] of this.touched) {
-      // React 已經改過的節點不要去動，只換回「還是我們寫的那個樣子」的
-      if (node.isConnected && node.nodeValue === info.restored) node.nodeValue = info.masked;
-    }
     this.touched.clear();
-    this.highlight?.clear();
-    this.onChange(0);
+    this.onChange(0, []);
   }
 
   private scheduleFlush(): void {
@@ -133,43 +119,41 @@ export class PageRestorer {
 
   private restoreNode(node: Text): void {
     const value = node.nodeValue;
-    if (!value || !value.includes('[')) return;
-    if (!isRestorableTextNode(node, this.ownHost)) return;
+    if (!value || !value.includes('[') || !isRestorableTextNode(node, this.ownHost)) {
+      this.touched.delete(node);
+      return;
+    }
 
     const result = restoreString(value, this.map);
-    if (result.restored === 0) return;
-
-    node.nodeValue = result.text;
-    this.touched.set(node, { masked: value, restored: result.text });
-    if (this.highlight) {
-      for (const seg of result.segments) {
-        const range = document.createRange();
-        range.setStart(node, seg.start);
-        range.setEnd(node, seg.end);
-        this.highlight.add(range);
-      }
+    if (result.restored === 0) {
+      this.touched.delete(node);
+      return;
     }
+
+    // 安全邊界：只記錄結果，不做 node.nodeValue = result.text。
+    this.touched.set(node, {
+      masked: value,
+      restored: result.text,
+      restoredCount: result.restored,
+    });
   }
 
   private report(): void {
     let count = 0;
+    const snippets: string[] = [];
+    const seen = new Set<string>();
     for (const [node, info] of this.touched) {
-      if (!node.isConnected || node.nodeValue !== info.restored) {
+      if (!node.isConnected || node.nodeValue !== info.masked) {
         this.touched.delete(node);
         continue;
       }
-      count += restoreString(info.masked, this.map).restored;
+      count += info.restoredCount;
+      if (!seen.has(info.restored)) {
+        seen.add(info.restored);
+        snippets.push(info.restored);
+      }
     }
-    this.onChange(count);
-  }
-
-  private ensureHighlight(): void {
-    if (this.highlight || typeof CSS === 'undefined' || !('highlights' in CSS)) return;
-    this.highlight = new Highlight();
-    CSS.highlights.set(HIGHLIGHT_NAME, this.highlight);
-    const style = document.createElement('style');
-    style.textContent = `::highlight(${HIGHLIGHT_NAME}) { background-color: rgba(16, 185, 129, .25); }`;
-    document.head.appendChild(style);
+    this.onChange(count, snippets);
   }
 }
 
@@ -188,6 +172,20 @@ const TOGGLE_STYLE = `
   .dot { width: 8px; height: 8px; border-radius: 50%; background: #94a3b8; }
   button.on .dot { background: #10b981; }
   .hint { font-weight: 400; color: #64748b; }
+  .panel {
+    position: fixed; right: 16px; bottom: 140px; z-index: 2147483646;
+    width: min(520px, calc(100vw - 32px)); max-height: min(55vh, 520px);
+    overflow: auto; box-sizing: border-box; padding: 14px;
+    border: 1px solid #5eead4; border-radius: 12px;
+    background: #f8fafc; color: #0f172a;
+    box-shadow: 0 12px 35px rgba(15, 23, 42, .24);
+    font: 13px/1.55 -apple-system, "Segoe UI", "Microsoft JhengHei", sans-serif;
+  }
+  .panel[hidden] { display: none; }
+  .title { margin: 0 0 8px; color: #0f766e; font-weight: 700; }
+  .notice { margin: 0 0 10px; color: #475569; font-size: 12px; }
+  pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; }
+  .snippet + .snippet { border-top: 1px solid #cbd5e1; margin-top: 10px; padding-top: 10px; }
 `;
 
 /**
@@ -197,6 +195,8 @@ const TOGGLE_STYLE = `
 export class RestoreToggle {
   readonly host: HTMLElement;
   private button: HTMLButtonElement;
+  private panel: HTMLElement;
+  private snippets: HTMLElement;
 
   constructor(onClick: () => void) {
     this.host = document.createElement('tw-pii-restore-toggle');
@@ -205,18 +205,35 @@ export class RestoreToggle {
     style.textContent = TOGGLE_STYLE;
     this.button = document.createElement('button');
     this.button.addEventListener('click', onClick);
-    root.append(style, this.button);
+    this.panel = document.createElement('section');
+    this.panel.className = 'panel';
+    const title = document.createElement('p');
+    title.className = 'title';
+    title.textContent = '🛡 本機還原檢視器';
+    const notice = document.createElement('p');
+    notice.className = 'notice';
+    notice.textContent = '真值只顯示在擴充套件的封閉區域；AI 網頁仍保留佔位符。';
+    this.snippets = document.createElement('div');
+    this.panel.append(title, notice, this.snippets);
+    root.append(style, this.panel, this.button);
     this.host.hidden = true;
     document.documentElement.appendChild(this.host);
   }
 
-  render(visible: boolean, enabled: boolean, restoredCount: number): void {
+  render(visible: boolean, enabled: boolean, restoredCount: number, snippets: string[] = []): void {
     this.host.hidden = !visible;
     this.host.style.display = visible ? '' : 'none';
     this.button.className = enabled ? 'on' : '';
-    this.button.innerHTML = enabled
-      ? `<span class="dot"></span>🛡 已還原 ${restoredCount} 處 <span class="hint">· 點我看 AI 收到的版本</span>`
-      : `<span class="dot"></span>👁 目前顯示 AI 收到的版本 <span class="hint">· 點我還原</span>`;
-    this.button.title = '本地端敏感資訊過濾：AI 回覆裡的佔位符在你的電腦上換回真值，雲端從頭到尾只看到佔位符';
+    this.button.textContent = enabled
+      ? `🛡 本機檢視 ${restoredCount} 處 · 點我關閉`
+      : '👁 AI 頁面顯示佔位符 · 點我本機還原';
+    this.button.title = '明文只在擴充套件的封閉檢視器顯示，不寫回 AI 網頁 DOM';
+    this.panel.hidden = !enabled || snippets.length === 0;
+    this.snippets.replaceChildren(...snippets.map((text) => {
+      const pre = document.createElement('pre');
+      pre.className = 'snippet';
+      pre.textContent = text;
+      return pre;
+    }));
   }
 }

@@ -1,6 +1,8 @@
 """proxy/settings.py 與 /demo/settings：執行中調整設定。"""
 
 import json
+import sys
+import types
 
 import pytest
 from fastapi.testclient import TestClient
@@ -16,6 +18,8 @@ def _restore_config(monkeypatch):
                  "IMAGE_POLICY", "DOCUMENT_POLICY", "ENABLE_NER"):
         monkeypatch.setattr(config, name, getattr(config, name))
     monkeypatch.setattr(config, "ENABLE_DEMO", True)
+    monkeypatch.setattr(settings, "_ner_loading", False)
+    monkeypatch.setattr(settings, "_ner_desired_enabled", config.ENABLE_NER)
 
 
 @pytest.fixture
@@ -132,3 +136,31 @@ def test_示範頁沒開時設定端點不存在(client, monkeypatch):
     monkeypatch.setattr(config, "ENABLE_DEMO", False)
     assert client.get("/demo/settings").status_code == 404
     assert client.post("/demo/settings", content="{}", headers=JSON).status_code == 404
+
+
+def test_語意層載入期間關閉_完成後仍維持關閉(monkeypatch):
+    """回歸：開啟後立刻關閉時，舊的背景工作不得把開關重新打開。"""
+    jobs = []
+
+    class DeferredThread:
+        def __init__(self, *, target, daemon):
+            assert daemon is True
+            self.target = target
+
+        def start(self):
+            jobs.append(self.target)
+
+    fake_detector = types.ModuleType("core.ner.detector")
+    fake_detector.detect_ner = lambda _text: []
+    monkeypatch.setitem(sys.modules, "core.ner.detector", fake_detector)
+    monkeypatch.setattr(settings, "ner_available", lambda: True)
+    monkeypatch.setattr(settings.threading, "Thread", DeferredThread)
+    monkeypatch.setattr(config, "ENABLE_NER", False)
+
+    settings.apply({"ner_enabled": True}, persist=False)
+    assert settings.current()["ner_loading"] is True
+    settings.apply({"ner_enabled": False}, persist=False)
+
+    jobs.pop()()
+    assert config.ENABLE_NER is False
+    assert settings.current()["ner_loading"] is False

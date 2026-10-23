@@ -25,9 +25,6 @@ const WEIGHT_BY_TYPE: Record<string, number> = {
   POSITION: 0.2,
   GENDER: 0.15,
   COMPANY: 0.15,
-  ORGANIZATION: 0.15,
-  GOVERNMENT: 0.15,
-  SCENE: 0.1,
 };
 
 const QUASI_IDENTIFIER_TYPES = new Set(Object.keys(WEIGHT_BY_TYPE));
@@ -116,9 +113,6 @@ const GENERIC_SUGGESTIONS: Record<string, string> = {
   POSITION: '職稱可保留，但建議避免同時透露服務公司名稱',
   GENDER: '若非必要，建議省略性別資訊',
   COMPANY: '公司名稱可模糊化為產業別（例如「某科技公司」）',
-  ORGANIZATION: '機構名稱可模糊化為機構類型',
-  GOVERNMENT: '政府機關名稱可模糊化為機關層級（例如「某地方政府機關」）',
-  SCENE: '常去地點建議降低描述精確度',
 };
 
 function buildSuggestions(text: string, contributingTypes: string[], today?: Date): string[] {
