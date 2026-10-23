@@ -46,6 +46,12 @@
         white-space: pre-wrap; word-break: break-all; max-height: 130px; overflow-y: auto;
       }
       .empty { padding: 12px; text-align: center; color: #94a3b8; font-size: 12px; }
+      .settings { margin-top: 12px; border: 1px solid #e2e8f0; border-radius: 8px; padding: 7px 10px; }
+      .settings summary { cursor: pointer; font-size: 12px; font-weight: 600; color: #334155; }
+      .types { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 10px; margin: 8px 0 4px; }
+      .types label { display: flex; align-items: center; gap: 6px; font-size: 12px; cursor: pointer; }
+      .types input { accent-color: #2563eb; }
+      .hint { margin: 4px 0 0; font-size: 11px; color: #94a3b8; line-height: 1.5; }
       footer { margin-top: 11px; padding-top: 9px; border-top: 1px solid #e2e8f0;
                font-size: 10.5px; color: #94a3b8; line-height: 1.5; }
     </style>
@@ -63,6 +69,12 @@
     </div>
 
     <div id="result"></div>
+
+    <details class="settings">
+      <summary>要攔截哪些個資</summary>
+      <div class="types" id="types"></div>
+      <p class="hint">取消勾選的類型，在 AI 網頁貼上時會直接放行、不跳確認面板。設定只存在這台電腦。</p>
+    </details>
 
     <footer>規則層（checksum）在本地執行，偵測邏輯與 proxy 端共用同一套規則並由一致性測試把關。</footer>
 

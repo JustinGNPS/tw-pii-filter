@@ -91,6 +91,11 @@
   .policy-control { display: inline-flex; align-items: center; gap: .45rem; font-size: .82rem; color: var(--muted); }
   .policy-control select { font: inherit; color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: 5px; padding: .38rem .55rem; }
 
+  .checks { display: grid; grid-template-columns: repeat(auto-fill, minmax(10.5rem, 1fr)); gap: .4rem .8rem; }
+  .checks label, .set-row { display: flex; gap: .5rem; align-items: flex-start; cursor: pointer; font-size: .92rem; }
+  .checks input, .set-row input { margin-top: .35rem; accent-color: var(--seal); }
+  .checks code { font-size: .72rem; color: var(--muted); }
+  .set-h { margin: .3rem 0 0; font-size: .8rem; color: var(--muted); font-weight: 600; }
   .split { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
   .split > div { background: var(--surface); padding: .9rem 1rem; display: flex; flex-direction: column; gap: .5rem; min-width: 0; }
   .split h4 { margin: 0; font-size: .72rem; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); font-family: var(--mono); }
@@ -187,6 +192,7 @@
     <button role="tab" data-tab="live" aria-selected="false">即時監看</button>
     <button role="tab" data-tab="ext" aria-selected="false">瀏覽器擴充</button>
     <button role="tab" data-tab="status" aria-selected="false">現況總覽</button>
+    <button role="tab" data-tab="settings" aria-selected="false">設定</button>
   </nav>
 
   <div class="panel" id="panel-try">
@@ -540,6 +546,51 @@ npm run build
     </section>
   </div>
 
+  <div class="panel" id="panel-settings" hidden>
+    <section class="card">
+      <h2>要遮蔽哪些個資 <span class="hint">取消勾選的類型會原樣送出；改了立即生效，不用重開</span></h2>
+      <h3 class="set-h">固定格式（規則層，永遠開啟）</h3>
+      <div class="checks" id="setRule"></div>
+      <h3 class="set-h">語意（需要語意層）</h3>
+      <div class="checks" id="setSemantic"></div>
+      <p class="note">職稱與公司預設不遮：遮了 AI 常常看不懂上下文。沒遮的項目仍會計入組合風險。</p>
+    </section>
+
+    <section class="card">
+      <h2>偵測與附件</h2>
+      <label class="set-row"><input type="checkbox" id="setNer"> <span><b>語意層</b>（認得姓名、地址、職稱、公司）<br><small id="setNerNote" class="note"></small></span></label>
+      <label class="set-row"><input type="checkbox" id="setRisk"> <span><b>組合風險提示</b>（年齡＋性別＋地區＋職稱組合起來可能認出一個人）</span></label>
+      <label class="policy-control">組合風險自動降階
+        <select id="setReduction">
+          <option value="off">off：只提示，不改內容</option>
+          <option value="permissive">permissive：只處理高風險</option>
+          <option value="balanced">balanced：降到低風險</option>
+          <option value="strict">strict：所有準識別子都處理</option>
+        </select>
+      </label>
+      <label class="policy-control">agent 讀到的圖片
+        <select id="setImage">
+          <option value="remove">移除，換成一行說明（建議）</option>
+          <option value="allow">照原樣送出（不檢查內容）</option>
+        </select>
+      </label>
+      <label class="policy-control">agent 讀到的 PDF
+        <select id="setDoc">
+          <option value="extract">在本機轉成文字後遮蔽（建議）</option>
+          <option value="remove">整份移除</option>
+        </select>
+      </label>
+    </section>
+
+    <section class="card">
+      <div class="row">
+        <span id="setMsg" class="note">設定會存在這台電腦（.pii_settings.json），下次啟動自動套用。</span>
+        <span class="spacer"></span>
+        <button class="btn" id="setReset">恢復預設（下次啟動生效）</button>
+      </div>
+    </section>
+  </div>
+
   <footer>
     tw-pii-filter · 本機示範介面 · 需 <code>PII_ENABLE_DEMO=1</code> 才會啟用，不參與轉發
   </footer>
@@ -572,11 +623,12 @@ const esc = (s) => s.replace(/[&<>"]/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt
 document.querySelectorAll('nav.tabs button').forEach((tab) => {
   tab.addEventListener('click', () => {
     document.querySelectorAll('nav.tabs button').forEach((t) => t.setAttribute('aria-selected', String(t === tab)));
-    ['try', 'what', 'live', 'ext', 'status'].forEach((name) => {
+    ['try', 'what', 'live', 'ext', 'status', 'settings'].forEach((name) => {
       $('panel-' + name).hidden = (name !== tab.dataset.tab);
     });
     if (tab.dataset.tab === 'status') loadStatus();
     if (tab.dataset.tab === 'live') pollEvents();
+    if (tab.dataset.tab === 'settings') loadSettings();
   });
 });
 
@@ -885,6 +937,70 @@ async function loadStatus() {
     ? 'agent 流量 0 次代表還沒有任何 agent 連過來 —— 這一欄是用來確認「流量真的有走 proxy」的。'
     : `最近一次 agent 請求：${t.last_at}（${t.seconds_since_last} 秒前）`;
 }
+
+// ── 設定 ──────────────────────────────────────────────────────
+let settingsState = null;
+
+function renderChecks(boxId, types, enabled, disabled) {
+  $(boxId).innerHTML = Object.entries(types).map(([code, label]) =>
+    `<label><input type="checkbox" data-type="${code}" ${enabled.includes(code) ? 'checked' : ''} ${disabled ? 'disabled' : ''}>
+       <span>${esc(label)} <code>${code}</code></span></label>`).join('');
+}
+
+function renderSettings(s) {
+  settingsState = s;
+  renderChecks('setRule', s.types.rule, s.mask_types, false);
+  renderChecks('setSemantic', s.types.semantic, s.mask_types, false);
+  $('setNer').checked = s.ner_enabled || s.ner_loading;
+  $('setNer').disabled = !s.ner_available || s.ner_loading;
+  $('setNerNote').textContent = !s.ner_available
+    ? '尚未安裝（約 1 GB）：重新執行啟動.bat，啟動時選擇安裝'
+    : s.ner_loading ? '模型載入中（約 10 秒），載入完成前只跑規則層……'
+    : s.ner_enabled ? '已開啟。這個開關只對這次執行有效，下次啟動時啟動器會再問。'
+    : '已關閉，姓名與地址不會被偵測。這個開關只對這次執行有效。';
+  $('setRisk').checked = s.risk_warning;
+  $('setReduction').value = s.risk_reduction_policy;
+  $('setImage').value = s.image_policy;
+  $('setDoc').value = s.document_policy;
+  if (s.ner_loading) setTimeout(loadSettings, 1500);
+}
+
+async function loadSettings() {
+  const res = await fetch('/demo/settings');
+  if (res.ok) renderSettings(await res.json());
+}
+
+async function saveSettings(patch) {
+  $('setMsg').textContent = '儲存中……';
+  const res = await fetch('/demo/settings', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch)
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    $('setMsg').textContent = '沒有套用：' + (err.detail || res.status);
+    loadSettings();
+    return;
+  }
+  renderSettings(await res.json());
+  $('setMsg').textContent = '已套用並儲存 ✓（立即生效）';
+}
+
+document.getElementById('panel-settings').addEventListener('change', (e) => {
+  const t = e.target;
+  if (t.dataset.type) {
+    const types = [...document.querySelectorAll('#panel-settings [data-type]')].filter((c) => c.checked).map((c) => c.dataset.type);
+    saveSettings({ mask_types: types });
+  } else if (t.id === 'setNer') saveSettings({ ner_enabled: t.checked });
+  else if (t.id === 'setRisk') saveSettings({ risk_warning: t.checked });
+  else if (t.id === 'setReduction') saveSettings({ risk_reduction_policy: t.value });
+  else if (t.id === 'setImage') saveSettings({ image_policy: t.value });
+  else if (t.id === 'setDoc') saveSettings({ document_policy: t.value });
+});
+
+$('setReset').addEventListener('click', async () => {
+  await fetch('/demo/settings/reset', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+  $('setMsg').textContent = '存檔已刪除。這次執行的設定不變，下次啟動回到預設值。';
+});
 
 loadStatus();
 </script>

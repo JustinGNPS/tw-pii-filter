@@ -36,6 +36,8 @@ import {
 import { showPanel } from '../../extension/src/content/panel';
 import { maskText, riskLevel, typeLabel } from '../../extension/src/masking';
 import { PlaceholderAllocator } from '../../extension/src/placeholder';
+import { PageRestorer } from '../../extension/src/content/restorer';
+import { reverseMap } from '../../extension/src/restore';
 
 // ────────────────────────────────────────────────────────────
 // 範例資料
@@ -704,4 +706,76 @@ btnPlay?.addEventListener('click', () => void playTerminal());
 if (term) {
   term.innerHTML =
     '<span class="note">（按上面的按鈕播放）</span>';
+}
+
+// ────────────────────────────────────────────────────────────
+// 完整版 ①：擴充的回覆還原
+//
+// PageRestorer 是擴充的真品（extension/src/content/restorer.ts）。範圍限定在
+// 這個聊天視窗：頁面上其他地方刻意顯示佔位符（「雲端 AI 實際收到的」），不能被還原。
+// 回覆用 nodeValue 逐段寫入，模擬 ChatGPT（React）串流時更新 DOM 的方式 ——
+// 佔位符會被切在兩段之間，這正是要展示的情況。
+// ────────────────────────────────────────────────────────────
+
+const rsChat = document.getElementById('rs-chat');
+const rsReply = document.getElementById('rs-reply');
+const rsPlay = document.getElementById('rs-play') as HTMLButtonElement | null;
+const rsToggle = document.getElementById('rs-toggle') as HTMLButtonElement | null;
+const rsNote = document.getElementById('rs-note');
+
+// 對照表：等同使用者剛才貼上時，擴充在本機存下的那一份
+const rsAllocator = new PlaceholderAllocator();
+rsAllocator.allocate('TW_ID', 'A123456789');
+rsAllocator.allocate('TW_PHONE_M', '0912-345-678');
+
+const RS_CHUNKS = [
+  '好的，以下是請假信：\n\n',
+  '主管您好：\n本人（身分證字號 [TW_',
+  'ID_1]）因身體不適，',
+  '擬於明日請病假一天。\n如有急事請撥 [TW_PHONE_M_1] 與我聯繫。\n\n',
+  '（附註：我不確定 [TW_ID_9] 是什麼，原文沒有這個編號。）',
+];
+
+let rsPlaying = false;
+
+if (rsChat && rsReply && rsPlay && rsToggle && rsNote) {
+  const restorer = new PageRestorer(
+    null,
+    (count) => {
+      rsToggle.textContent = restorer.enabled ? '👁 看 AI 收到的版本' : '🛡 還原';
+      if (restorer.enabled && count > 0) rsNote.textContent = `已在本地還原 ${count} 處（標綠）· AI 自己編的 [TW_ID_9] 原樣保留`;
+      else if (!restorer.enabled) rsNote.textContent = '現在顯示的是雲端 AI 實際收到、實際回覆的內容';
+    },
+    rsChat,
+  );
+  restorer.setMap(reverseMap(rsAllocator.toState()));
+
+  rsToggle.addEventListener('click', () => {
+    if (restorer.enabled) restorer.disable();
+    else restorer.enable();
+  });
+
+  rsPlay.addEventListener('click', async () => {
+    if (rsPlaying) return;
+    rsPlaying = true;
+    rsPlay.disabled = true;
+    rsToggle.disabled = false;
+    restorer.disable();
+    rsReply.textContent = '';
+    const node = document.createTextNode('');
+    rsReply.appendChild(node);
+    restorer.enable();
+    rsNote.textContent = 'AI 回覆串流中……';
+
+    let acc = '';
+    for (const chunk of RS_CHUNKS) {
+      await new Promise((r) => setTimeout(r, 450));
+      // 像 React 一樣：拿「AI 送來的原始累積內容」覆寫同一個節點
+      acc += chunk;
+      node.nodeValue = acc;
+    }
+    rsPlaying = false;
+    rsPlay.disabled = false;
+    rsPlay.textContent = '重播';
+  });
 }

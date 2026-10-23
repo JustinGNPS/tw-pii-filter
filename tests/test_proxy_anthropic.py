@@ -313,24 +313,28 @@ def test_tool_calls參數裡的佔位符會被還原成真值(client):
 
 
 @respx.mock
-def test_出現image時回501不轉發(client):
+def test_出現image時換成說明文字照常轉發_不再整個卡死(client):
+    """以前回 501；Claude Code 每輪重送歷史，出現一次圖片之後每個請求都會失敗。
+    現在預設把圖片換成說明文字，圖片資料不會送出去。"""
     route = respx.post(f"{UPSTREAM}/chat/completions").mock(
-        return_value=httpx.Response(200, json={})
+        return_value=_openai_sse_response(text="ok")
     )
 
     payload = _anthropic_payload("hi")
     payload["messages"].append(
         {
             "role": "user",
-            "content": [{"type": "image", "source": {"type": "base64", "data": "..."}}],
+            "content": [{"type": "image", "source": {"type": "base64", "data": "SECRETIMAGEBYTES"}}],
         }
     )
 
     response = client.post("/v1/messages", json=payload)
 
-    assert response.status_code == 501
-    assert response.json()["type"] == "error"
-    assert not route.called  # 沒有翻譯邏輯可用，不該轉發出錯誤的請求
+    assert response.status_code == 200
+    assert route.called
+    sent = route.calls[0].request.content.decode("utf-8")
+    assert "SECRETIMAGEBYTES" not in sent
+    assert "本地個資過濾器" in sent
 
 
 def test_無效json回400(client):

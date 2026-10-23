@@ -9,6 +9,7 @@
 
 import { detectAll } from '../core';
 import { maskText, riskLevel, typeLabel } from '../masking';
+import { configurableTypes, filterEnabled, loadEnabledTypes, saveEnabledTypes } from '../settings';
 
 const SAMPLE = [
   '病歷摘要：病患王小明，身分證 A123456789，聯絡電話 0912-345-678，',
@@ -20,6 +21,9 @@ const SAMPLE = [
 const input = document.querySelector<HTMLTextAreaElement>('#input')!;
 const result = document.querySelector<HTMLDivElement>('#result')!;
 const stat = document.querySelector<HTMLSpanElement>('#stat')!;
+const typeBox = document.querySelector<HTMLDivElement>('#types')!;
+
+let enabledTypes = new Set<string>();
 
 function escapeHtml(value: string): string {
   return value.replace(
@@ -39,10 +43,14 @@ function scan(): void {
 
   // 量測偵測耗時，對應風險清單 R2：延遲超過 1 秒使用者就不會用
   const started = performance.now();
-  const { spans } = detectAll(text);
+  const all = detectAll(text).spans;
   const elapsed = performance.now() - started;
+  const spans = filterEnabled(all, enabledTypes);
+  const off = all.length - spans.length;
 
-  stat.innerHTML = `偵測 <b>${spans.length}</b> 項 · <b>${elapsed.toFixed(1)}</b> ms`;
+  stat.innerHTML =
+    `偵測 <b>${spans.length}</b> 項 · <b>${elapsed.toFixed(1)}</b> ms` +
+    (off ? ` · <span title="在下方設定中關閉的類型">略過 ${off}</span>` : '');
 
   if (spans.length === 0) {
     result.innerHTML = '<div class="empty">未偵測到敏感資訊</div>';
@@ -83,4 +91,28 @@ document.querySelector('#sample')!.addEventListener('click', () => {
 // 邊打邊掃，讓延遲問題在開發階段就無所遁形
 input.addEventListener('input', scan);
 
-scan();
+// ── 設定：要攔截哪些類型 ──
+function renderTypes(): void {
+  typeBox.innerHTML = configurableTypes()
+    .map(
+      ({ code, label }) =>
+        `<label><input type="checkbox" data-type="${code}" ${enabledTypes.has(code) ? 'checked' : ''}> ${escapeHtml(label)}</label>`,
+    )
+    .join('');
+}
+
+typeBox.addEventListener('change', () => {
+  enabledTypes = new Set(
+    [...typeBox.querySelectorAll<HTMLInputElement>('input[data-type]')]
+      .filter((box) => box.checked)
+      .map((box) => box.dataset.type!),
+  );
+  void saveEnabledTypes(enabledTypes);
+  scan();
+});
+
+void loadEnabledTypes().then((types) => {
+  enabledTypes = types;
+  renderTypes();
+  scan();
+});
