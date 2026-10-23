@@ -1,0 +1,101 @@
+{
+  "schema_version": 1,
+  "description": "風險降階策略的合成評估案例；所有姓名、公司、地址與識別資料均為測試用途，不代表真實人物。",
+  "cases": [
+    {
+      "id": "no_sensitive_data",
+      "description": "不含個資或準識別子的負向對照",
+      "text": "請協助整理這份公開文件的段落結構。",
+      "entities": []
+    },
+    {
+      "id": "direct_identifiers_only",
+      "description": "只有規則層直接識別資訊",
+      "text": "測試資料的身分證是 A123456789，手機是 0912-345-678，信箱是 demo@example.com。",
+      "entities": []
+    },
+    {
+      "id": "age_gender",
+      "description": "年齡與性別形成低度組合風險",
+      "text": "這位35歲女性需要協助。",
+      "entities": []
+    },
+    {
+      "id": "company_position",
+      "description": "公司與職稱形成組合風險",
+      "text": "此人在範例科技擔任後端工程師。",
+      "entities": [
+        {"type": "COMPANY", "text": "範例科技"},
+        {"type": "POSITION", "text": "後端工程師"}
+      ]
+    },
+    {
+      "id": "age_gender_position",
+      "description": "達到高風險門檻的三種準識別子",
+      "text": "這位35歲女性目前擔任後端工程師。",
+      "entities": [
+        {"type": "POSITION", "text": "後端工程師"}
+      ]
+    },
+    {
+      "id": "age_gender_company_position",
+      "description": "四種準識別子共同出現",
+      "text": "這位35歲女性目前在範例科技擔任後端工程師。",
+      "entities": [
+        {"type": "COMPANY", "text": "範例科技"},
+        {"type": "POSITION", "text": "後端工程師"}
+      ]
+    },
+    {
+      "id": "address_age_gender",
+      "description": "地址先由基礎遮蔽移除，只留下年齡與性別風險",
+      "text": "一位35歲女性住在臺北市測試區範例路一段1號。",
+      "entities": [
+        {"type": "ADDRESS", "text": "臺北市測試區範例路一段1號"}
+      ]
+    },
+    {
+      "id": "name_company_position",
+      "description": "姓名先遮蔽，公司與職稱仍保留在雲端可見內容",
+      "text": "測試甲目前在範例科技擔任後端工程師。",
+      "entities": [
+        {"type": "NAME", "text": "測試甲"},
+        {"type": "COMPANY", "text": "範例科技"},
+        {"type": "POSITION", "text": "後端工程師"}
+      ]
+    },
+    {
+      "id": "fullwidth_age_phone",
+      "description": "全形年齡與電話",
+      "text": "這位３５歲男性的測試手機是０９１２－３４５－６７８。",
+      "entities": []
+    },
+    {
+      "id": "birth_year_gender_company",
+      "description": "出生年、性別與公司",
+      "text": "民國78年次男性目前任職於範例科技。",
+      "entities": [
+        {"type": "COMPANY", "text": "範例科技"}
+      ]
+    },
+    {
+      "id": "company_gender_position",
+      "description": "未達高風險門檻但 balanced 仍會降低的案例",
+      "text": "這位女性在範例科技擔任資料工程師。",
+      "entities": [
+        {"type": "COMPANY", "text": "範例科技"},
+        {"type": "POSITION", "text": "資料工程師"}
+      ]
+    },
+    {
+      "id": "mixed_direct_high_risk",
+      "description": "直接識別資訊與高風險準識別子同時出現",
+      "text": "測試乙的身分證是 A123456789，信箱是 demo@example.com；這位35歲女性在範例科技擔任後端工程師。",
+      "entities": [
+        {"type": "NAME", "text": "測試乙"},
+        {"type": "COMPANY", "text": "範例科技"},
+        {"type": "POSITION", "text": "後端工程師"}
+      ]
+    }
+  ]
+}
