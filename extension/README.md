@@ -84,7 +84,7 @@ cd extension && npm test
 - [x] Layer 3 組合風險評分（TypeScript 移植 + 面板提示）
 - [x] 語意層型別白名單（`NER_ALLOW_TYPES`，與 proxy 一致）
 - [ ] 語意層（transformers.js + NER 模型）—— 技術風險高，見下
-- [ ] 還原機制（第二版，佔位符 + 對照表）
+- [x] AI 回覆還原（佔位符在本地換回真值、可切換看 AI 收到的版本；B 實作，見 `src/restore.ts`、`src/content/restorer.ts`）
 
 ## Layer 3：組合風險評分
 

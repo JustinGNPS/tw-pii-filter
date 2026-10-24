@@ -35,7 +35,9 @@ from proxy import (
     detector,
     forward,
     masker,
+    media,
     risk,
+    settings,
     traffic,
 )
 from core.redact import restorer
@@ -63,7 +65,11 @@ async def lifespan(app: FastAPI):
     # 對照表只存在記憶體，隨行程結束消失 —— 真實個資不落地
     # 閒置逾時後會自動清空（決定 11），逾時秒數見 config.MAPPING_IDLE_TIMEOUT
     app.state.mapping = MappingTable(idle_timeout=config.MAPPING_IDLE_TIMEOUT)
+    # 設定介面存下來的設定優先於 .env（見 proxy/settings.py），要在印摘要之前套用
+    saved = settings.load_saved()
     logger.info("proxy 啟動\n%s", config.startup_summary())
+    if saved:
+        logger.info("已套用設定介面儲存的設定（%s，優先於 .env）", settings.SETTINGS_FILE.name)
     if not config.UPSTREAM_BASE_URL:
         logger.warning(forward.MISSING_UPSTREAM_MESSAGE)
     if not config.UPSTREAM_API_KEY:
@@ -279,11 +285,14 @@ def _mask_request(path: str, body: bytes, table: MappingTable) -> tuple[bytes, f
     started = time.perf_counter()
     try:
         payload = json.loads(body.decode("utf-8"))
+        # 先把圖片／PDF 換成文字，PDF 抽出的文字才會跟其他文字走同一條遮蔽路徑
+        media_report = media.sanitize(payload)
+        media.log_report(media_report)
         issued_before = table.issued_counts()
         counts, combination_risk = masker.mask_payload_with_risk(payload, table)
         # 自動降階可能只把 AGE/GENDER 泛化，不會產生佔位符計數；只看 counts
         # 會把已修改的 payload 丟掉。策略啟用時一律重新序列化最安全。
-        if counts or config.RISK_REDUCTION_POLICY != "off":
+        if counts or media_report.changed or config.RISK_REDUCTION_POLICY != "off":
             body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         _log_new_values(issued_before, table)
         _log_combination_risk(combination_risk)
@@ -436,6 +445,7 @@ def _mask_anthropic_payload(payload: dict, table: MappingTable) -> tuple[dict, f
     """
     started = time.perf_counter()
     try:
+        media.log_report(media.sanitize(payload), tag="（Claude Code）")
         issued_before = table.issued_counts()
         _, combination_risk = masker.mask_payload_with_risk(payload, table)
         _log_new_values(issued_before, table, tag="（Claude Code）")
@@ -456,16 +466,17 @@ async def _proxy_anthropic(request: Request) -> Response:
     if not isinstance(payload, dict):
         return _anthropic_error(400, "invalid_request_error", "無法解析請求內容")
 
+    started = time.perf_counter()
+    # 圖片／PDF 在這一步就換成文字（見 proxy/media.py），所以下面的檢查
+    # 正常情況下不會再擋到東西 —— 留著是防禦未知的新 block 類型
+    payload, detect_ms = await asyncio.to_thread(_mask_anthropic_payload, payload, table)
+
     if anthropic_adapter.has_unsupported_content(payload):
         return _anthropic_error(
             501,
             "not_implemented",
-            "此 proxy 尚未支援圖片／文件附件內容（純文字對話與工具呼叫已支援，"
-            "開發中，見 docs/B_progress.md）",
+            "此 proxy 尚未支援這種附件內容（文字、工具呼叫、PDF 與圖片已支援）",
         )
-
-    started = time.perf_counter()
-    payload, detect_ms = await asyncio.to_thread(_mask_anthropic_payload, payload, table)
 
     model = payload.get("model") or config.DEFAULT_MODEL
     message_id = f"msg_{uuid.uuid4().hex[:24]}"

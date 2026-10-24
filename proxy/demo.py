@@ -205,6 +205,64 @@ async def reset() -> dict:
     return {"ok": True, "mapping_entries": len(DEMO_TABLE)}
 
 
+def _require_same_origin(request: Request) -> None:
+    """設定可以把遮蔽關掉，必須擋下「別的網站偷偷呼叫 localhost」。
+
+    proxy 只綁 127.0.0.1，區網的人碰不到；但使用者瀏覽的任何網頁都可以叫
+    瀏覽器送請求到 http://127.0.0.1:8000（CSRF）。三道檢查：
+      1. 必須是 application/json —— 跨站的 JSON 請求一定會觸發 CORS 預檢，
+         而 proxy 不回任何 CORS 標頭，預檢失敗、請求根本送不出來
+      2. 瀏覽器帶了 Sec-Fetch-Site 的話，必須是 same-origin（或 none：使用者自己打的）
+      3. 帶了 Origin 的話，主機必須是本機
+    curl 這類非瀏覽器工具不會帶後兩個標頭，照樣可以用（它們本來就在本機上）。
+    """
+    if not request.headers.get("content-type", "").startswith("application/json"):
+        raise HTTPException(status_code=415, detail="只接受 application/json")
+    site = request.headers.get("sec-fetch-site")
+    if site is not None and site not in ("same-origin", "none"):
+        raise HTTPException(status_code=403, detail="只接受本機示範頁面發出的請求")
+    origin = request.headers.get("origin")
+    if origin is not None:
+        from urllib.parse import urlparse
+
+        if urlparse(origin).hostname not in ("127.0.0.1", "localhost", "::1"):
+            raise HTTPException(status_code=403, detail="只接受本機示範頁面發出的請求")
+
+
+@router.get("/settings")
+async def get_settings() -> dict:
+    """目前生效的設定（給「設定」分頁顯示）。"""
+    _require_enabled()
+    from proxy import settings
+
+    return settings.current()
+
+
+@router.post("/settings")
+async def post_settings(request: Request) -> dict:
+    """套用並儲存設定，立即生效。值不合法時回 400，一個都不改。"""
+    _require_enabled()
+    _require_same_origin(request)
+    from proxy import settings
+
+    try:
+        body = await request.json()
+        return settings.apply(body)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/settings/reset")
+async def reset_settings(request: Request) -> dict:
+    """刪掉存檔：下次啟動回到 .env／預設值。這次執行中的設定不變。"""
+    _require_enabled()
+    _require_same_origin(request)
+    from proxy import settings
+
+    settings.reset()
+    return settings.current()
+
+
 @router.get("/events")
 async def events(since: int = 0) -> dict:
     """自 `since` 之後發生的事件，給「即時監看」分頁輪詢用。

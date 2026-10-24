@@ -215,6 +215,13 @@ pre.snippet .c{color:var(--muted)}
 ul.tight{margin:0; padding-left:20px}
 ul.tight li{margin:6px 0; font-size:14.5px}
 
+/* ── 完整版：回覆還原示範 ── */
+.rs-row{display:flex; margin:8px 0}
+.rs-row.me{justify-content:flex-end}
+.bubble.me{border-radius:14px 14px 4px 14px; background:var(--accent-soft); color:var(--ink); font-family:ui-monospace,Consolas,monospace; font-size:13px}
+.bubble.ai{color:var(--ink); white-space:pre-wrap; max-width:100%; min-height:1.7em}
+::highlight(tw-pii-restored){background-color:rgba(16,185,129,.28)}
+
 footer{padding:30px 0 56px; color:var(--muted); font-size:13.5px; border-top:1px solid var(--line)}
 footer p{margin:0 0 6px}
 </style>
@@ -227,6 +234,7 @@ footer p{margin:0 0 6px}
     <a href="#demo">試用</a>
     <a class="opt" href="#why">為什麼需要</a>
     <a class="opt" href="#how">怎麼運作</a>
+    <a class="opt" href="#full">完整版</a>
     <a class="opt" href="#status">完成度</a>
     <a href="https://github.com/JustinGNPS/tw-pii-filter" target="_blank" rel="noopener">GitHub</a>
   </div>
@@ -480,6 +488,109 @@ aider</pre>
         </tbody>
       </table>
     </div>
+  </div>
+</section>
+
+<section id="full">
+  <div class="wrap">
+    <h2>完整版軟體：這個網頁看不到的部分</h2>
+    <p class="sub">
+      這個網頁只能跑「可以放在瀏覽器裡」的部分。下載完整版、雙擊 <code>啟動.bat</code>，還有下面這些功能。
+      能在網頁上操作的就讓你操作；不能的，附上真實執行紀錄與出處，不做假畫面。
+    </p>
+
+    <h3>① 擴充的回覆還原<span class="pill low" style="margin-left:8px">可操作</span></h3>
+    <p class="lead">
+      裝了擴充之後，ChatGPT 的回覆一邊串流出來、佔位符就一邊在你的電腦上換回真值（標綠色）。
+      右下角有一顆開關，隨時切回「AI 實際收到的版本」。
+    </p>
+    <div class="card chat" id="rs-chat">
+      <div class="chat-head">
+        <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+        <span class="chat-title">某 AI 聊天網站（已安裝擴充）</span>
+      </div>
+      <div class="chat-body">
+        <div class="rs-row me"><div class="bubble me">我的身分證是 [TW_ID_1]，手機 [TW_PHONE_M_1]，幫我寫一封請假信給主管</div></div>
+        <div class="rs-row"><div class="bubble ai" id="rs-reply">（按下方按鈕，模擬 AI 串流回覆）</div></div>
+      </div>
+      <div class="composer composer-bar" style="margin-top:0">
+        <button class="go" id="rs-play">模擬 AI 回覆</button>
+        <button class="chip" id="rs-toggle" disabled>👁 看 AI 收到的版本</button>
+        <span class="hint" id="rs-note">送出時已在本地遮蔽，雲端 AI 只收到佔位符</span>
+      </div>
+    </div>
+    <p class="fine">
+      還原與開關是擴充的真品：這一段直接 <code>import</code> 擴充的 <code>content/restorer.ts</code>。
+      只改文字節點的內容、不拆網頁結構（ChatGPT 是 React，拆了會壞）；輸入框一律不還原，否則送出去的就是真值。
+      回覆裡若出現 AI 自己編的 <code>[TW_ID_9]</code>，會原樣保留、絕不猜測。
+    </p>
+
+    <h3 style="margin-top:34px">② 網頁版 vs 完整版</h3>
+    <div class="card tablewrap">
+      <table>
+        <thead><tr><th>功能</th><th>這個網頁</th><th>完整版</th><th>網頁為什麼做不到</th></tr></thead>
+        <tbody>
+          <tr><td>規則層 8 種個資＋檢核碼</td><td class="ok">即時</td><td class="ok">✓</td><td>—</td></tr>
+          <tr><td>擴充貼上攔截與確認面板</td><td class="ok">即時（上方）</td><td class="ok">✓</td><td>—</td></tr>
+          <tr><td>擴充回覆還原與切換開關</td><td class="ok">即時（①）</td><td class="ok">✓</td><td>—</td></tr>
+          <tr><td>組合風險評分與泛化建議</td><td class="ok">即時</td><td class="ok">✓</td><td>—</td></tr>
+          <tr><td>語意層：姓名、地址、職稱、公司</td><td>實錄</td><td class="ok">✓ 本機離線</td><td>模型約 389 MB，瀏覽器裡太慢</td></tr>
+          <tr><td>內政部人口統計估算「符合條件最多幾人」</td><td>實錄（③）</td><td class="ok">✓</td><td>人口資料快照目前只有 Python 版</td></tr>
+          <tr><td>組合風險自動降階（4 種策略）</td><td>實錄（③）</td><td class="ok">✓</td><td>在 proxy 裡執行</td></tr>
+          <tr><td>AI coding agent 防護（6 款實測通過）</td><td>實錄</td><td class="ok">✓</td><td>要在本機攔截 API 請求，需要後端</td></tr>
+          <tr><td>串流回覆、工具呼叫參數的還原</td><td>—</td><td class="ok">✓</td><td>同上</td></tr>
+          <tr><td>agent 讀到的 PDF：本機轉文字後遮蔽；圖片預設移除</td><td>—</td><td class="ok">✓</td><td>同上</td></tr>
+          <tr><td>即時監看面板（看 proxy 背景在做什麼）</td><td>—</td><td class="ok">✓</td><td>讀的是 proxy 的真實流量</td></tr>
+          <tr><td>流量確認（防止 agent 設定失效、偷偷直連雲端）</td><td>—</td><td class="ok">✓</td><td>同上</td></tr>
+          <tr><td>對照表自動清除</td><td>關掉分頁即消失</td><td class="ok">✓ proxy 閒置 30 分、擴充 12 小時</td><td>—</td></tr>
+          <tr><td>一鍵啟動器（選單）</td><td>—</td><td class="ok">✓</td><td>是安裝在電腦上的程式</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3 style="margin-top:34px">③ 實錄：人口估算與自動降階</h3>
+    <p class="lead">
+      一段<b>沒有身分證、沒有電話</b>的文字，照樣可能指認出一個人。完整版開啟語意層後的真實輸出：
+    </p>
+    <div class="card">
+<pre class="snippet"><span class="c">輸入</span>
+我是35歲女性，住在台北市，職業是護理師
+
+<span class="c">組合風險</span>
+分數 1.00（高）  貢獻類別：ADDRESS、AGE、GENDER、POSITION
+<span class="c">內政部人口統計（2026-07 快照）</span>
+台北市 35 歲女性：最多 15,689 人 —— 再加上「護理師」，範圍更小</pre>
+    </div>
+    <p class="lead" style="margin-top:14px">同一段話（加上一句問題）在 proxy 裡套用四種降階策略。地址已先被遮蔽，殘餘風險 0.70：</p>
+    <div class="card tablewrap">
+      <table>
+        <thead><tr><th>策略</th><th>雲端 AI 實際收到的</th><th>殘餘風險</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">off</td><td>我是35歲女性，住在<span class="tok">[ADDRESS_1]</span>，職業是護理師，最近睡不好想問問 AI 建議</td><td><span class="pill high">0.70 高</span></td></tr>
+          <tr><td class="mono">permissive</td><td>我是35歲<b>人士</b>，住在<span class="tok">[ADDRESS_1]</span>，職業是護理師，最近睡不好想問問 AI 建議</td><td><span class="pill medium">0.55 中</span></td></tr>
+          <tr><td class="mono">balanced</td><td>我是<b>成年年齡層人士</b>，住在<span class="tok">[ADDRESS_1]</span>，職業是護理師，最近睡不好想問問 AI 建議</td><td><span class="pill low">0.00 低</span></td></tr>
+          <tr><td class="mono">strict</td><td>我是<b>成年年齡層人士</b>，住在<span class="tok">[ADDRESS_1]</span>，職業是<span class="tok">[POSITION_1]</span>，最近睡不好想問問 AI 建議</td><td><span class="pill low">0.00 低</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="provenance" style="margin-top:10px">
+      出處：2026-10-21 以 <code>core.rules.detect_all()</code>（語意層開啟）與 <code>proxy.masker.reduce_residual_text()</code> 實際執行的輸出，未經修改。
+      預設策略是 <code>off</code>（只提示不改寫）。分數 0 只代表低於目前簡化評分模型的門檻，不代表真實世界完全無法重新識別。
+      年齡、性別的泛化是刻意不可逆的。
+    </p>
+
+    <h3 style="margin-top:34px">④ 取得完整版</h3>
+    <div class="flow" style="margin-bottom:12px">
+      <div class="card"><b>1. 下載</b>到 GitHub 下載 ZIP 並解壓縮</div>
+      <div class="card"><b>2. 準備</b>Windows ＋ Chrome；要用 agent 防護再裝 Python 3.11</div>
+      <div class="card"><b>3. 雙擊 啟動.bat</b>選單：[1] Proxy＋示範頁　[2] 安裝擴充</div>
+      <div class="card"><b>4. 照常使用</b>貼上 ChatGPT 自動攔截；agent 改一行網址</div>
+    </div>
+    <p class="fine">
+      <a href="https://github.com/JustinGNPS/tw-pii-filter/blob/main/docs/%E4%BD%BF%E7%94%A8%E8%AA%AA%E6%98%8E%E6%9B%B8.md" target="_blank" rel="noopener">使用說明書</a> ·
+      <a href="https://github.com/JustinGNPS/tw-pii-filter/blob/main/docs/%E6%B5%81%E7%A8%8B%E5%9C%96%E8%88%87%E5%B7%A5%E4%BD%9C%E6%B5%81.md" target="_blank" rel="noopener">流程圖與工作流</a> ·
+      <a href="https://github.com/JustinGNPS/tw-pii-filter" target="_blank" rel="noopener">原始碼</a>
+    </p>
   </div>
 </section>
 

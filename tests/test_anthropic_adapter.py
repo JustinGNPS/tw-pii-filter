@@ -54,7 +54,9 @@ def test_tool_result不算超出範圍():
     assert anthropic_adapter.has_unsupported_content(payload) is False
 
 
-def test_出現image算超出範圍():
+def test_image_不再算超出範圍_由media模組先處理():
+    """圖片在進 adapter 之前已由 proxy/media.py 處理（預設換成說明文字，
+    allow 時由 adapter 轉成 image_url），所以 adapter 不再擋圖片。"""
     payload = {
         "messages": [
             {
@@ -63,11 +65,11 @@ def test_出現image算超出範圍():
             }
         ]
     }
-    assert anthropic_adapter.has_unsupported_content(payload) is True
+    assert anthropic_adapter.has_unsupported_content(payload) is False
 
 
-def test_tool_result裡藏著image也算超出範圍():
-    """螢幕截圖類工具的結果可能是圖片，藏在 tool_result.content 裡。"""
+def test_沒被media處理掉的document仍算超出範圍():
+    """防禦用：正常流程裡 document 一定先被換成文字；若漏了，寧可明確失敗。"""
     payload = {
         "messages": [
             {
@@ -76,13 +78,57 @@ def test_tool_result裡藏著image也算超出範圍():
                     {
                         "type": "tool_result",
                         "tool_use_id": "t1",
-                        "content": [{"type": "image", "source": {}}],
+                        "content": [{"type": "document", "source": {}}],
                     }
                 ],
             }
         ]
     }
     assert anthropic_adapter.has_unsupported_content(payload) is True
+
+
+def test_allow時使用者附的圖片轉成openai的image_url():
+    payload = {
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "看這張圖"},
+                    {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "AAAA"}},
+                ],
+            }
+        ]
+    }
+    out = anthropic_adapter.to_openai_request(payload, model="m")
+    assert out["messages"] == [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "看這張圖"},
+                {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}},
+            ],
+        }
+    ]
+
+
+def test_工具結果裡的圖片傳不過去時明講而不是默默丟掉():
+    payload = {
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "t1",
+                        "content": [{"type": "image", "source": {"type": "base64", "data": "AAAA"}}],
+                    }
+                ],
+            }
+        ]
+    }
+    out = anthropic_adapter.to_openai_request(payload, model="m")
+    assert out["messages"][0]["role"] == "tool"
+    assert "無法傳遞" in out["messages"][0]["content"]
 
 
 def test_content_是純字串時不會誤判():

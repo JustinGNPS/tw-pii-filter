@@ -1,10 +1,11 @@
 """Claude Code（Anthropic Messages API）↔ AIR（OpenAI 相容格式）之間的轉換。
 
 **第 4 步：工具呼叫遞迴處理**——涵蓋純文字對話與工具呼叫（`tool_use`／
-`tool_result`）。仍未支援的是圖片／文件附件（`image`／`document` block），
-遇到就用 `has_unsupported_content()` 擋下、誠實回報「還沒支援」，不要硬翻
-出格式不明的請求（比對外承認「這個功能還沒做」更糟——參見
-`docs/B_progress.md` 型別代碼正規化那段的教訓：沉默失敗比明確失敗更危險）。
+`tool_result`）。圖片與文件（`image`／`document` block）在進這個模組之前
+已由 `proxy/media.py` 處理：文件換成文字，圖片預設換成說明文字。
+`has_unsupported_content()` 仍保留，用來擋萬一漏網的未知類型，寧可明確
+回報「還沒支援」，也不要硬翻出格式不明的請求（參見 `docs/B_progress.md`
+型別代碼正規化那段的教訓：沉默失敗比明確失敗更危險）。
 
 遮蔽/還原刻意沒有另外寫一套：
 - `proxy.detector.extract_texts()` 已擴充到能挖出 `messages[].content`
@@ -31,9 +32,14 @@ import codecs
 import json
 from typing import Any
 
-# 目前還不會翻譯的內容類型：圖片／文件附件。工具呼叫（tool_use/tool_result）
-# 已經支援，不在這個名單裡。
-_UNSUPPORTED_BLOCK_TYPES = ("image", "document")
+# 目前還不會翻譯的內容類型。圖片與文件在送到這裡之前已由 `proxy/media.py`
+# 處理：文件一律換成文字；圖片預設換成說明文字，`PII_IMAGE_POLICY=allow`
+# 時保留並由 `_user_message_to_openai()` 轉成 OpenAI 的 image_url。
+# 所以正常情況下這個名單擋不到東西，留著是防禦未知的新 block 類型。
+_UNSUPPORTED_BLOCK_TYPES = ("document",)
+
+# 工具結果裡的圖片：OpenAI 的 role="tool" 訊息只能放文字，傳不過去
+_TOOL_RESULT_IMAGE_NOTE = "〔本地個資過濾器：工具結果裡有一張圖片，上游格式無法傳遞，已省略〕"
 
 
 def _blocks_have_unsupported_type(blocks: Any) -> bool:
@@ -83,8 +89,23 @@ def _tool_result_text(content: Any) -> str:
     if isinstance(content, str):
         return content
     if isinstance(content, list):
-        return _block_list_text(content)
+        text = _block_list_text(content)
+        if any(isinstance(b, dict) and b.get("type") == "image" for b in content):
+            text = f"{text}\n\n{_TOOL_RESULT_IMAGE_NOTE}" if text else _TOOL_RESULT_IMAGE_NOTE
+        return text
     return ""
+
+
+def _image_part(block: dict) -> dict | None:
+    """Anthropic image block → OpenAI image_url part（只在 PII_IMAGE_POLICY=allow 時會走到）。"""
+    source = block.get("source") or {}
+    if source.get("type") == "base64" and source.get("data"):
+        url = f"data:{source.get('media_type', 'image/png')};base64,{source['data']}"
+    elif source.get("type") == "url" and source.get("url"):
+        url = source["url"]
+    else:
+        return None
+    return {"type": "image_url", "image_url": {"url": url}}
 
 
 def _assistant_message_to_openai(content: Any) -> list[dict]:
@@ -147,17 +168,28 @@ def _user_message_to_openai(role: str, content: Any) -> list[dict]:
 
     messages: list[dict] = []
     text_parts: list[str] = []
+    image_parts: list[dict] = []
 
     def _flush_text() -> None:
-        if text_parts:
+        if image_parts:
+            # 有圖片時 content 必須是 parts 陣列；沒有圖片維持原本的純字串，
+            # 不改變既有請求的形狀
+            parts = [{"type": "text", "text": "\n\n".join(text_parts)}] if text_parts else []
+            messages.append({"role": role, "content": parts + image_parts})
+        elif text_parts:
             messages.append({"role": role, "content": "\n\n".join(text_parts)})
-            text_parts.clear()
+        text_parts.clear()
+        image_parts.clear()
 
     for block in content:
         if not isinstance(block, dict):
             continue
         if block.get("type") == "text" and isinstance(block.get("text"), str):
             text_parts.append(block["text"])
+        elif block.get("type") == "image":
+            part = _image_part(block)
+            if part:
+                image_parts.append(part)
         elif block.get("type") == "tool_result":
             _flush_text()
             messages.append(
