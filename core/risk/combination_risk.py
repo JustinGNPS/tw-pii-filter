@@ -5,7 +5,7 @@ Layer 3：組合風險評分
 依據：
   - docs/layer3_spec.md（A 在 PR #18 定案的正式規格）
   - 專題報告第 6.2 節、第 12 節 R4：「先做簡化版（共現計數），再談 k-anonymity」
-  - C 在 PR #17 review 的三個建議：補上 ADDRESS/SCENE、擴充年齡格式、差異化權重
+  - C 在 PR #17 review 的建議：補上 ADDRESS、擴充年齡格式、差異化權重
 
 核心概念（報告第 4.3 節）：
     llm-redactor 論文實測：就算把明顯的 PII 字串都遮掉，「隱含身分」（無 PII
@@ -39,25 +39,15 @@ from core.risk.population_estimator import (
     extract_county_city,
 )
 
-# ---------------------------------------------------------------------------
-# ⚠️ ORGANIZATION / GOVERNMENT / SCENE 目前是設計預留、非啟用中：
-# 這三個型別不在 proxy 的 PII_NER_ALLOW_TYPES 白名單內，會在 detect_all()
-# 上游就被過濾掉，實務上永遠不會出現在傳進本模組的 spans 裡，因此下面
-# 這三個權重目前不會生效。這不是 bug，是白名單機制（後做的決定）晚於
-# 組合風險評分（先做的決定）造成的排序問題，詳見 issue #34。
-# 若之後要讓這三種型別參與組合風險評分，只需要把它們加進
-# proxy/config.py 的 PII_NER_ALLOW_TYPES，本檔案不需要任何修改——
-# 權重與邏輯已經備妥。
-# ---------------------------------------------------------------------------
+# 權重只列目前偵測管線真正會產生、且可信的準識別子。通用 NER 的
+# ORGANIZATION/GOVERNMENT/SCENE 在技術文字中誤判率高，已由白名單排除；
+# 不在這裡保留永遠到不了的權重，避免介面宣稱支援、執行時卻不可能觸發。
 WEIGHT_BY_TYPE: Dict[str, float] = {
     "AGE": 0.35,
     "ADDRESS": 0.30,
     "POSITION": 0.20,
     "GENDER": 0.15,
     "COMPANY": 0.15,
-    "ORGANIZATION": 0.15,
-    "GOVERNMENT": 0.15,
-    "SCENE": 0.10,
 }
 
 # 只有這些型別會被計入組合風險（對應 NER 型別裡「刻意不遮蔽、單獨看不是
@@ -203,9 +193,6 @@ _GENERIC_SUGGESTIONS = {
     "POSITION": "職稱可保留，但建議避免同時透露服務公司名稱",
     "GENDER": "若非必要，建議省略性別資訊",
     "COMPANY": "公司名稱可模糊化為產業別（例如「某科技公司」）",
-    "ORGANIZATION": "機構名稱可模糊化為機構類型",
-    "GOVERNMENT": "政府機關名稱可模糊化為機關層級（例如「某地方政府機關」）",
-    "SCENE": "常去地點建議降低描述精確度",
 }
 
 

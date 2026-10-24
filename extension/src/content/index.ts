@@ -18,24 +18,27 @@
 import { detectAll } from '../core';
 import { maskText } from '../masking';
 import {
-  PlaceholderAllocator,
   conversationKey,
-  loadState,
-  saveState,
+  PlaceholderAllocator,
+  purgeStoredMappings,
 } from '../placeholder';
-import { isNewChatPath, reverseMap } from '../restore';
+import { reverseMap } from '../restore';
 import { filterEnabled, loadEnabledTypes } from '../settings';
 import { findNearMisses } from '../explain';
 import { showNearMissHint } from './hint';
 import { insertText, isEditable } from './insert';
 import { showPanel } from './panel';
 import { PageRestorer, RestoreToggle } from './restorer';
+import { ConversationStateStore } from './conversation_state';
 
 /** 防止我們自己插入的文字再次觸發攔截，造成無限迴圈。 */
 let isInserting = false;
 
 /** 同一時間只允許一個面板，避免連續貼上時疊出多個對話框。 */
 let panelOpen = false;
+
+/** 每個分頁各自一份；新對話尚無 ID 時絕不寫入跨分頁共用的 storage key。 */
+const stateStore = new ConversationStateStore();
 
 async function handleText(element: HTMLElement, text: string): Promise<void> {
   const detected = detectAll(text);
@@ -61,8 +64,8 @@ async function handleText(element: HTMLElement, text: string): Promise<void> {
   }
 
   // 以「這個對話」為單位載入配號狀態，讓同一個真值在多輪之間拿到同一個佔位符
-  const storageKey = conversationKey(new URL(location.href));
-  const state = await loadState(storageKey);
+  const currentUrl = new URL(location.href);
+  const state = await stateStore.load(currentUrl);
 
   // 面板上顯示的佔位符要用「預覽」配號器算：使用者可能取消勾選某些項目，
   // 直接在正式配號器上配會留下用不到的號碼缺口。
@@ -89,36 +92,13 @@ async function handleText(element: HTMLElement, text: string): Promise<void> {
 
     // 正式配號只針對使用者實際勾選的項目
     const allocator = new PlaceholderAllocator(state);
-    const { maskedText, mapping } = maskText(text, decision.spans, allocator);
+    const { maskedText } = maskText(text, decision.spans, allocator);
     insertText(element, maskedText);
 
-    void recordMapping(mapping);
-    await saveState(storageKey, allocator.toState());
-    savedThisPage.add(storageKey);
+    await stateStore.save(currentUrl, allocator.toState());
     void refreshRestore();
   } finally {
     isInserting = false;
-  }
-}
-
-/**
- * 把這次遮蔽的對照表留一份歷史紀錄（最近 50 次）。
- *
- * 還原本身不讀這份：還原用的是以對話為單位的配號狀態（見 refreshRestore），
- * 作用域比這份精準 —— 這份是全部網站、全部對話混在一起的。
- *
- * ⚠️ 對照表本身就是一份集中的明文個資，是攻擊面。目前先明確標記
- * 資料結構與時間戳，加密與自動過期留待第二版還原機制一起處理
- * （見專題報告 7.2 節「對照表是攻擊面」）。這份資料絕不外傳。
- */
-async function recordMapping(mapping: ReturnType<typeof maskText>['mapping']): Promise<void> {
-  if (mapping.length === 0) return;
-  try {
-    const { sessions = [] } = await chrome.storage.local.get('sessions');
-    sessions.push({ at: Date.now(), host: location.host, mapping });
-    await chrome.storage.local.set({ sessions: sessions.slice(-50) });
-  } catch (error) {
-    console.warn('[tw-pii-filter] 對照表寫入失敗', error);
   }
 }
 
@@ -164,35 +144,34 @@ chrome.runtime.onMessage.addListener((message) => {
 
 const RESTORE_PREF_KEY = 'restoreEnabled';
 
-/** 這個分頁存過配號狀態的 key。只有這些才有資格在換網址時被搬走（見 adoptNewChatState）。 */
-const savedThisPage = new Set<string>();
-
 let restoreEnabled = true;
 let lastHref = location.href;
 let mapSize = 0;
 let restoredCount = 0;
+let restoredSnippets: string[] = [];
 
 const toggle = new RestoreToggle(() => void onToggleClick());
-const restorer = new PageRestorer(toggle.host, (count) => {
+const restorer = new PageRestorer(toggle.host, (count, snippets) => {
   restoredCount = count;
-  toggle.render(mapSize > 0, restorer.enabled, restoredCount);
+  restoredSnippets = snippets;
+  toggle.render(mapSize > 0, restorer.enabled, restoredCount, restoredSnippets);
 });
 
 /** 重新載入「這個對話」的對照表，並依開關狀態套用。 */
 async function refreshRestore(): Promise<void> {
-  const state = await loadState(conversationKey(new URL(location.href)));
+  const state = await stateStore.load(new URL(location.href));
   const map = reverseMap(state);
   mapSize = map.size;
   restorer.setMap(map);
   if (restoreEnabled && mapSize > 0) restorer.enable();
-  toggle.render(mapSize > 0, restorer.enabled, restoredCount);
+  toggle.render(mapSize > 0, restorer.enabled, restoredCount, restoredSnippets);
 }
 
 async function onToggleClick(): Promise<void> {
   restoreEnabled = !restoreEnabled;
   if (restoreEnabled) restorer.enable();
   else restorer.disable();
-  toggle.render(mapSize > 0, restorer.enabled, restoredCount);
+  toggle.render(mapSize > 0, restorer.enabled, restoredCount, restoredSnippets);
   try {
     await chrome.storage.local.set({ [RESTORE_PREF_KEY]: restoreEnabled });
   } catch {
@@ -210,25 +189,11 @@ async function onToggleClick(): Promise<void> {
  *  3. 新網址還沒有自己的狀態
  */
 async function adoptNewChatState(prev: URL, next: URL): Promise<void> {
-  if (prev.host !== next.host || !isNewChatPath(prev.pathname)) return;
-  const prevKey = conversationKey(prev);
-  if (!savedThisPage.has(prevKey)) return;
-  const nextKey = conversationKey(next);
-  const nextState = await loadState(nextKey);
-  if (Object.keys(nextState.assigned).length > 0) return;
-
-  const prevState = await loadState(prevKey);
-  await saveState(nextKey, prevState);
-  savedThisPage.delete(prevKey);
-  savedThisPage.add(nextKey);
-  try {
-    await chrome.storage.local.remove(prevKey);
-  } catch {
-    /* 舊的那份會在 12 小時後過期 */
-  }
+  await stateStore.adoptNewChatState(prev, next);
 }
 
 async function initRestore(): Promise<void> {
+  await purgeStoredMappings();
   try {
     const stored = await chrome.storage.local.get(RESTORE_PREF_KEY);
     if (stored[RESTORE_PREF_KEY] === false) restoreEnabled = false;

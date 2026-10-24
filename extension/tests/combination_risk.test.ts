@@ -80,16 +80,23 @@ describe('computeCombinationRisk', () => {
     expect(risk.score).toBe(0); // 只剩一個準識別子
   });
 
+  it('語意白名單排除的型別不保留無法觸發的風險權重', () => {
+    const risk = computeCombinationRisk('一般技術文字', [
+      modelSpan('ORGANIZATION', 'mistral'),
+      modelSpan('GOVERNMENT', '某局'),
+      modelSpan('SCENE', '某場景'),
+    ]);
+    expect(risk.contributing_types).toEqual([]);
+    expect(risk.score).toBe(0);
+  });
+
   it('分數封頂在 1.0', () => {
     const risk = computeCombinationRisk('40歲的女士', [
       modelSpan('ADDRESS', '新竹市東區'),
       modelSpan('POSITION', '工程師'),
       modelSpan('COMPANY', '某科技公司'),
-      modelSpan('ORGANIZATION', '某協會'),
-      modelSpan('GOVERNMENT', '某局'),
-      modelSpan('SCENE', '某公園'),
     ]);
-    // 0.35+0.15+0.30+0.20+0.15+0.15+0.15+0.10 = 1.55 → 封頂
+    // 0.35+0.15+0.30+0.20+0.15 = 1.15 → 封頂
     expect(risk.score).toBe(1.0);
     expect(risk.risk_level).toBe('高');
   });

@@ -51,9 +51,6 @@ REDUCTION_PRIORITY = (
     "COMPANY",
     "AGE",
     "ADDRESS",
-    "ORGANIZATION",
-    "GOVERNMENT",
-    "SCENE",
     "POSITION",
 )
 
