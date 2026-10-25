@@ -85,6 +85,25 @@ def test_抽得出PDF文字():
     assert "A123456789" in media.extract_pdf_text(PII_PDF)
 
 
+def test_PDF抽出的康熙部首字換回一般漢字(monkeypatch):
+    # 實測 Edge 輸出的 PDF「承租人：王小明」抽出來是「承租⼈：王⼩明」（U+2F08、U+2F29），
+    # 外觀一樣但編碼不同，語意層會認不出姓名。這裡模擬 pypdf 抽出這樣的文字。
+    from pypdf import PageObject
+
+    raw = "承租⼈：王⼩明，⾝分證 A123456789，⼿機 0912345678"
+    monkeypatch.setattr(PageObject, "extract_text", lambda self, *a, **k: raw)
+
+    text = media.extract_pdf_text(PII_PDF)
+
+    assert text == "承租人：王小明，身分證 A123456789，手機 0912345678"
+
+
+def test_部首轉換不動其他字():
+    # 全形數字、圈號、一般漢字都是使用者原文，不能被順手改掉
+    original = "Ａ１２３ ① 王小明 test@example.com ⺠"
+    assert media._fix_radicals(original) == original
+
+
 def test_Claude_Code讀到的PDF換成文字後照常遮蔽():
     payload = _anthropic_tool_result(_anthropic_pdf_block())
     report = media.sanitize(payload)
