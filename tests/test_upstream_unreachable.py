@@ -9,6 +9,8 @@
 實務上第二種更常見：位址打錯、校內服務要先連 VPN、上游掛掉、逾時。
 """
 
+import ssl
+
 import httpx
 import pytest
 import respx
@@ -136,3 +138,71 @@ def test_遮蔽仍然照做_不因為連不上就跳過(client, monkeypatch):
 
     assert response.status_code == 502
     assert masked["counts"].get("TW_ID") == 1
+
+
+# ── 收到回應前斷線：自動重送一次 ─────────────────────────────────
+# 2026-10-25 實測：Claude Code 經 proxy 連校內端點，一個工作階段內出現 3 次
+# ssl.SSLError（DECRYPTION_FAILED_OR_BAD_RECORD_MAC）。它不是 httpx.RequestError，
+# 原本會穿過錯誤處理，agent 收到無訊息的 500。
+
+
+def _ssl_error() -> ssl.SSLError:
+    return ssl.SSLError(1, "[SSL: DECRYPTION_FAILED_OR_BAD_RECORD_MAC] decryption failed or bad record mac")
+
+
+@respx.mock
+def test_SSL斷線一次_自動重送後成功(client):
+    route = respx.post(f"{UPSTREAM}/chat/completions").mock(
+        side_effect=[_ssl_error(), httpx.Response(200, json={"choices": []})]
+    )
+
+    response = client.post("/v1/chat/completions", json=_PAYLOAD)
+
+    assert response.status_code == 200
+    assert route.call_count == 2
+
+
+@respx.mock
+def test_SSL連續斷線_回502與說明而不是無訊息的500(client):
+    route = respx.post(f"{UPSTREAM}/chat/completions").mock(
+        side_effect=[_ssl_error(), _ssl_error()]
+    )
+
+    response = client.post("/v1/chat/completions", json=_PAYLOAD)
+
+    assert response.status_code == 502
+    error = response.json()["error"]
+    assert error["code"] == "upstream_unreachable"
+    assert "DECRYPTION_FAILED" in error["message"]
+    assert route.call_count == 2  # 只重送一次，不會無限重試
+
+
+@respx.mock
+def test_Claude_Code路徑的SSL斷線也會重送(client):
+    route = respx.post(f"{UPSTREAM}/chat/completions").mock(
+        side_effect=[
+            _ssl_error(),
+            httpx.Response(200, json={"choices": [{"message": {"role": "assistant", "content": "ok"}}]}),
+        ]
+    )
+
+    response = client.post(
+        "/v1/messages",
+        json={"model": "claude-x", "max_tokens": 10, "stream": False,
+              "messages": [{"role": "user", "content": "hi"}]},
+    )
+
+    assert response.status_code == 200
+    assert route.call_count == 2
+
+
+@respx.mock
+def test_上游已經回了錯誤狀態碼就不重送(client):
+    # 重送只針對「沒收到任何回應」；上游明確拒絕（4xx/5xx）時重送沒有意義
+    route = respx.post(f"{UPSTREAM}/chat/completions").mock(
+        return_value=httpx.Response(500, json={"error": {"message": "boom"}})
+    )
+
+    client.post("/v1/chat/completions", json=_PAYLOAD)
+
+    assert route.call_count == 1

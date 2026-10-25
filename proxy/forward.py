@@ -5,9 +5,21 @@
 遮蔽與還原是下一版的事。
 """
 
+import logging
+import ssl
+
 import httpx
 
 from proxy import config
+
+logger = logging.getLogger("proxy")
+
+# 「還沒收到任何回應就斷線」的錯誤：請求的結果還沒有任何部分送回 agent，
+# 重送一次不會造成重複輸出。實測（2026-10-25，Claude Code 經 proxy 連校內端點）
+# 一個工作階段內出現 3 次 `ssl.SSLError: DECRYPTION_FAILED_OR_BAD_RECORD_MAC`，
+# 走不走系統代理都會發生，原因未查明；它不是 httpx.RequestError 的子類別，
+# 原本會穿過 main.py 的錯誤處理變成無訊息的 500。
+_RETRYABLE_BEFORE_RESPONSE = (ssl.SSLError, httpx.RemoteProtocolError)
 
 # 上游 base URL 未設定時要回給 agent 的訊息。寫成常數是因為
 # `proxy/main.py` 的錯誤處理與測試都要引用同一份文字。
@@ -126,6 +138,9 @@ async def open_upstream(
     一律用 `stream=True`：SSE 要能一段一段往下傳，不能等整包收完
     （否則 agent 那邊的打字機效果會消失，且大回應會卡住）。
     呼叫端負責讀完後 `aclose()`。
+
+    收到回應**之前**連線就斷掉（見 `_RETRYABLE_BEFORE_RESPONSE`）會自動重送一次。
+    開始串流之後的斷線不在這裡處理 —— 那時已有內容送到 agent，重送會重複。
     """
     request = client.build_request(
         method,
@@ -134,4 +149,12 @@ async def open_upstream(
         headers=build_request_headers(headers),
         content=body if body else None,
     )
-    return await client.send(request, stream=True)
+    try:
+        return await client.send(request, stream=True)
+    except _RETRYABLE_BEFORE_RESPONSE as exc:
+        logger.warning("與上游的連線在收到回應前中斷，重送一次：%s", exc)
+    try:
+        return await client.send(request, stream=True)
+    except ssl.SSLError as exc:
+        # 轉成 httpx 的連線錯誤，交給 main.py 既有的「上游連不上」處理（502 + 說明）
+        raise httpx.ConnectError(f"與上游的加密連線中斷（重送一次仍失敗）：{exc}", request=request) from exc
