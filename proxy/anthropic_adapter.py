@@ -235,7 +235,7 @@ def to_openai_request(payload: dict, model: str) -> dict:
     `output_config` 這些 AIR 不認得、也沒有對應轉法的欄位一律丟棄。
 
     呼叫前應先用 `has_unsupported_content()` 確認這個請求在範圍內；
-    `model` 是 AIR 那邊真實存在的模型名稱（例如 `gpt-4.1-mini`），
+    `model` 是 AIR 那邊真實存在的模型名稱（例如 `gpt-oss-120b`），
     不是 Claude Code 宣告的 `claude-sonnet-5`（AIR 不認得這個名字）。
     """
     openai_messages: list[dict] = []

@@ -291,7 +291,7 @@ python -m venv .venv
 |---|---|---|
 | 上游 base URL | `UPSTREAM_BASE_URL`、`OPENAI_BASE_URL`、`OPENAI_API_BASE`、`AIR_BASE_URL` | 無（**必填**，例：`https://<your-llm-gateway>/v1`） |
 | 上游金鑰 | `UPSTREAM_API_KEY`、`OPENAI_API_KEY`、`AIR_API_KEY`、`API_KEY` | 無（未設定會轉發失敗） |
-| 預設模型 | `DEFAULT_MODEL`、`OPENAI_MODEL`、`AIR_MODEL` | `gpt-4.1-mini` |
+| 預設模型 | `DEFAULT_MODEL`、`OPENAI_MODEL`、`AIR_MODEL` | `gpt-oss-120b`（啟動時會向上游確認存在；`PROXY_CHECK_MODEL=0` 可關閉檢查） |
 | 連線逾時（秒） | `PROXY_CONNECT_TIMEOUT` | `10` |
 | 讀取逾時（秒） | `PROXY_READ_TIMEOUT` | `600` |
 | 不遮蔽的型別（逗號分隔） | `PII_SKIP_TYPES` | `POSITION,COMPANY` |
@@ -355,7 +355,7 @@ curl http://localhost:8000/healthz
 ```powershell
 $env:OPENAI_API_BASE = "http://localhost:8000/v1"
 $env:OPENAI_API_KEY  = "dummy"   # 真金鑰在 proxy 那邊
-aider --model gpt-4.1-mini
+aider --model openai/gpt-oss-120b
 ```
 
 其他 agent 只需要把 base URL 指過來，**proxy 本身不用改**。
