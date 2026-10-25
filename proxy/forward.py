@@ -33,6 +33,10 @@ _DROP_REQUEST_HEADERS = {
     "trailer",
     "accept-encoding",
     "authorization",  # 換成 proxy 自己的上游金鑰
+    # 其他格式的金鑰標頭也一律丟掉：agent 若填的是真金鑰（例如 Anthropic 的
+    # x-api-key、Azure 的 api-key），原樣轉發等於把它交給另一家服務。
+    "x-api-key",
+    "api-key",
 }
 
 _DROP_RESPONSE_HEADERS = {

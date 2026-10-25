@@ -147,6 +147,26 @@ def test_金鑰被換成_proxy_自己的(client):
 
 
 @respx.mock
+@pytest.mark.parametrize("header", ["x-api-key", "api-key"])
+def test_agent_的其他金鑰標頭不會轉給上游(client, header):
+    # 使用者在 agent 那邊填的若是真金鑰，原樣轉發等於交給另一家服務
+    route = respx.post(f"{UPSTREAM}/chat/completions").mock(
+        return_value=httpx.Response(200, json={})
+    )
+
+    client.post(
+        "/v1/chat/completions",
+        json={"messages": []},
+        headers={header: "sk-agent-real-key"},
+    )
+
+    sent = route.calls.last.request.headers
+    assert header not in sent
+    assert "sk-agent-real-key" not in str(sent.raw)
+    assert sent["authorization"] == "Bearer test-key"
+
+
+@respx.mock
 def test_上游的錯誤狀態碼原樣傳回(client):
     respx.post(f"{UPSTREAM}/chat/completions").mock(
         return_value=httpx.Response(401, json={"error": {"message": "no"}})
