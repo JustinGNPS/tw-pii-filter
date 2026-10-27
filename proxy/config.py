@@ -39,10 +39,17 @@ UPSTREAM_API_KEY, UPSTREAM_API_KEY_ENV = _env(
     ("UPSTREAM_API_KEY", "OPENAI_API_KEY", "AIR_API_KEY", "API_KEY"),
 )
 
+# Claude Code 請求翻譯成 OpenAI 格式時用的模型（Claude Code 宣告的 claude-* 名稱
+# 上游不認得）。2026-10-25 學校端點下架 gpt-4.1 系列，改用當天以真實 Claude Code
+# 端對端驗證過、能做工具呼叫的 gpt-oss-120b。上游換模型時啟動檢查會提醒（見 main.py）。
 DEFAULT_MODEL, DEFAULT_MODEL_ENV = _env(
     ("DEFAULT_MODEL", "OPENAI_MODEL", "AIR_MODEL"),
-    "gpt-4.1-mini",
+    "gpt-oss-120b",
 )
+
+# 啟動時向上游查一次模型清單，確認 DEFAULT_MODEL 存在（查不到只印提示，不擋啟動）。
+# 設 PROXY_CHECK_MODEL=0 可關閉（測試就是這樣關掉的，避免每次啟動都連網路）。
+CHECK_MODEL_ON_START = os.getenv("PROXY_CHECK_MODEL", "1").strip().lower() not in ("0", "false", "no")
 
 # base URL 結尾不留斜線，方便後面直接字串相接
 UPSTREAM_BASE_URL = UPSTREAM_BASE_URL.rstrip("/")

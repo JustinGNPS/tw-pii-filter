@@ -104,7 +104,7 @@ detect_all(text: str, extra_spans: list = None) -> dict
 ## 環境
 
 - Python 3.11（`.venv/` 在 repo 根目錄，已被 `.gitignore` 擋掉）
-- 上游 LLM：OpenAI 相容端點，base URL 由 `.env` 的 `UPSTREAM_BASE_URL` 指定（程式沒有預設值），測試預設模型 `gpt-4.1-mini`
+- 上游 LLM：OpenAI 相容端點，base URL 由 `.env` 的 `UPSTREAM_BASE_URL` 指定（程式沒有預設值），預設模型 `gpt-oss-120b`（2026-10-25 起上游已下架 gpt-4.1 系列；proxy 啟動時會檢查模型是否存在）
 - 金鑰與設定在 repo 根目錄 `.env`（`.gitignore` 第 2 行已擋）
 - 語意層（`PII_ENABLE_NER=1`）需要另外 `pip install -r core/ner/requirements.txt`（torch/transformers，體積大，預設不裝）
 

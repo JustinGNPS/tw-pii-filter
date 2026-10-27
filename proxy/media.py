@@ -43,6 +43,7 @@ import binascii
 import hashlib
 import io
 import logging
+import unicodedata
 from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import Any
@@ -116,6 +117,22 @@ def _decode_data_url(value: str) -> tuple[str, bytes] | None:
         return None
 
 
+# PDF 抽出的中文常混進「部首」區段的字：字型把「小」「人」等常用字對應到
+# 康熙部首（U+2F00–2FDF）與部首補充（U+2E80–2EFF）的碼位，外觀一樣、編碼不同。
+# 實測 Edge 輸出的 PDF「王小明」抽出來是「王⼩明」—— 規則層不受影響（號碼是 ASCII），
+# 但語意層認不出這種姓名。只換這兩段裡有對應一般漢字的字，其他字一律不動
+# （不做全文 NFKC：那會連全形數字、圈號等使用者原文一起改掉）。
+_RADICAL_TABLE = {
+    cp: unicodedata.normalize("NFKC", chr(cp))
+    for cp in range(0x2E80, 0x2FE0)
+    if unicodedata.normalize("NFKC", chr(cp)) != chr(cp)
+}
+
+
+def _fix_radicals(text: str) -> str:
+    return text.translate(_RADICAL_TABLE)
+
+
 def extract_pdf_text(data: bytes) -> str | None:
     """抽出 PDF 文字。抽不到（掃描版）回空字串；讀不了（壞檔、加密、沒裝 pypdf）回 None。"""
     key = _digest(data)
@@ -133,7 +150,7 @@ def extract_pdf_text(data: bytes) -> str | None:
         reader = PdfReader(io.BytesIO(data))
         if reader.is_encrypted:
             reader.decrypt("")  # 只有「無密碼加密」打得開；有密碼的會在下面丟例外
-        pages = [page.extract_text() or "" for page in reader.pages]
+        pages = [_fix_radicals(page.extract_text() or "") for page in reader.pages]
         text = "\n\n".join(p.strip() for p in pages if p.strip())
     except Exception as exc:  # noqa: BLE001 - 壞掉的 PDF 不能讓整個請求失敗
         logger.warning("PDF 無法讀取，已移除：%s", exc)

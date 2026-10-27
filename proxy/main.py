@@ -89,10 +89,52 @@ async def lifespan(app: FastAPI):
         # 這裡只是治標。
         await asyncio.to_thread(detector._extra_spans, "")
         logger.info("語意層模型已預熱")
+    model_check = None
+    if config.CHECK_MODEL_ON_START and config.UPSTREAM_BASE_URL:
+        # 背景執行：上游慢或連不上都不該拖住啟動
+        model_check = asyncio.create_task(_check_default_model(app.state.client))
     try:
         yield
     finally:
+        if model_check is not None:
+            model_check.cancel()
         await app.state.client.aclose()
+
+
+async def _check_default_model(client) -> None:
+    """確認上游真的有提供 DEFAULT_MODEL。
+
+    沒有這個檢查時，模型下架的唯一症狀是 Claude Code 每個請求都失敗
+    （2026-10-25 實測：學校端點下架 gpt-4.1 系列，預設值 gpt-4.1-mini 整批 400）。
+    查詢本身失敗（端點不提供 /models、金鑰錯誤、連不上）只印提示，不當成錯誤。
+    """
+    try:
+        response = await client.get(
+            forward.upstream_url("models"),
+            headers=forward.build_request_headers({}),
+            timeout=15,
+        )
+        if response.status_code >= 400:
+            logger.info("無法取得上游模型清單（%d），略過模型檢查", response.status_code)
+            return
+        data = response.json().get("data", [])
+        ids = sorted({m.get("id") for m in data if isinstance(m, dict) and m.get("id")})
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:  # noqa: BLE001 - 檢查失敗不能影響 proxy 本身
+        logger.info("無法取得上游模型清單，略過模型檢查：%s", exc)
+        return
+    if not ids:
+        return
+    if config.DEFAULT_MODEL in ids:
+        logger.info("模型檢查：上游有提供 %s", config.DEFAULT_MODEL)
+    else:
+        logger.warning(
+            "模型檢查：上游沒有提供 %s —— Claude Code 的請求會全部失敗。"
+            "請在 .env 設定 DEFAULT_MODEL（要選支援工具呼叫的對話模型）。上游目前提供：%s",
+            config.DEFAULT_MODEL,
+            "、".join(ids),
+        )
 
 
 app = FastAPI(title="tw-pii-filter proxy", lifespan=lifespan)
@@ -437,6 +479,30 @@ def _anthropic_error(status_code: int, error_type: str, message: str) -> Respons
     )
 
 
+def _upstream_rejection_message(status_code: int, content: bytes) -> str:
+    """上游拒絕時，給 Claude Code 看的錯誤訊息要帶上上游自己講的原因。
+
+    只寫「上游拒絕請求（400）」的話，使用者看不出是模型名稱不存在、金鑰失效
+    還是請求太大（2026-10-25 實測：學校端點下架 gpt-4.1 後，畫面上只有 400）。
+    只取上游 JSON 的 `error.message`，並截斷長度。
+    """
+    reason = ""
+    try:
+        error = json.loads(content.decode("utf-8")).get("error")
+        if isinstance(error, dict):
+            reason = str(error.get("message") or "")
+        elif isinstance(error, str):
+            reason = error
+    except (UnicodeDecodeError, json.JSONDecodeError, AttributeError):
+        pass
+    message = f"上游拒絕請求（{status_code}）"
+    if reason:
+        message += f"：{reason[:300]}"
+    if status_code in (400, 404) and "model" in reason.lower():
+        message += f"。目前設定的模型是 {config.DEFAULT_MODEL}，請在 .env 設定 DEFAULT_MODEL 為上游提供的模型"
+    return message
+
+
 def _mask_anthropic_payload(payload: dict, table: MappingTable) -> tuple[dict, float]:
     """遮蔽 Anthropic 格式的請求 payload，回傳 (原 payload，花費的毫秒數)。
 
@@ -523,7 +589,7 @@ async def _relay_anthropic_once(
             content[:200],
         )
         return _anthropic_error(
-            502, "upstream_error", f"上游拒絕請求（{upstream.status_code}）"
+            502, "upstream_error", _upstream_rejection_message(upstream.status_code, content)
         )
 
     restored = unknown = 0
@@ -583,7 +649,7 @@ async def _relay_anthropic_stream(
             content[:200],
         )
         return _anthropic_error(
-            502, "upstream_error", f"上游拒絕請求（{upstream.status_code}）"
+            502, "upstream_error", _upstream_rejection_message(upstream.status_code, content)
         )
 
     async def relay():
