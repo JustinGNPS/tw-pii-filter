@@ -85,4 +85,29 @@ describe('新對話分頁隔離', () => {
     expect(reverseMap(stateB).get('[NAME_1]')).toBe('陳美玲');
     expect(await loadState('ph:chatgpt.com/')).toMatchObject({ assigned: {} });
   });
+
+  it('未送出就切到既有對話時會丟棄暫存，之後的新對話不會沿用舊資料', async () => {
+    const existing = stateFor('NAME', '既有對話的人');
+    installStorageMock({ 'ph:chatgpt.com/c/existing': existing });
+    const tab = new ConversationStateStore();
+    const newChat = new URL('https://chatgpt.com/');
+
+    await tab.save(newChat, stateFor('NAME', '未送出的暫存姓名'));
+    expect(await tab.adoptNewChatState(newChat, new URL('https://chatgpt.com/c/existing'))).toBe(false);
+
+    expect(reverseMap(await tab.load(newChat)).size).toBe(0);
+    expect(reverseMap(await loadState('ph:chatgpt.com/c/existing')).get('[NAME_1]')).toBe('既有對話的人');
+  });
+
+  it('從新對話跨站離開時會丟棄暫存，不會帶到另一個服務', async () => {
+    installStorageMock();
+    const tab = new ConversationStateStore();
+    const newChat = new URL('https://chatgpt.com/');
+
+    await tab.save(newChat, stateFor('NAME', '不該跨站的人'));
+    expect(await tab.adoptNewChatState(newChat, new URL('https://claude.ai/new'))).toBe(false);
+
+    expect(reverseMap(await tab.load(newChat)).size).toBe(0);
+    expect(reverseMap(await loadState('ph:claude.ai/chat/abc')).size).toBe(0);
+  });
 });

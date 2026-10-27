@@ -39,14 +39,25 @@ export class ConversationStateStore {
   }
 
   async adoptNewChatState(previous: URL, next: URL): Promise<boolean> {
-    if (previous.host !== next.host || !isNewChatPath(previous.pathname)) return false;
+    if (!isNewChatPath(previous.pathname)) return false;
     if (!this.pendingNewChatState) return false;
+
+    // 新對話頁上的對照表只能跟著「這一次建立的新對話」走。只要已經離開
+    // 新對話頁，就必須消耗或丟棄，不能留給之後另一個新對話使用。
+    // 跨站導覽絕不搬移對照表。
+    if (previous.host !== next.host) {
+      this.pendingNewChatState = null;
+      return false;
+    }
+    if (isNewChatPath(next.pathname)) return false;
+
+    const pending = this.pendingNewChatState;
+    this.pendingNewChatState = null;
 
     const existing = await this.load(next);
     if (Object.keys(existing.assigned).length > 0) return false;
 
-    await this.save(next, this.pendingNewChatState);
-    this.pendingNewChatState = null;
+    await this.save(next, pending);
     return true;
   }
 }

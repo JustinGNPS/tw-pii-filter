@@ -181,8 +181,14 @@ const TOGGLE_STYLE = `
     box-shadow: 0 12px 35px rgba(15, 23, 42, .24);
     font: 13px/1.55 -apple-system, "Segoe UI", "Microsoft JhengHei", sans-serif;
   }
+  button.left, .panel.left { right: auto; left: 16px; }
   .panel[hidden] { display: none; }
-  .title { margin: 0 0 8px; color: #0f766e; font-weight: 700; }
+  .header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
+  .title { margin: 0; color: #0f766e; font-weight: 700; }
+  .move {
+    position: static; z-index: auto; flex: 0 0 auto; padding: 3px 8px;
+    border-color: #99f6e4; box-shadow: none; font-size: 11.5px; font-weight: 600;
+  }
   .notice { margin: 0 0 10px; color: #475569; font-size: 12px; }
   pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; }
   .snippet + .snippet { border-top: 1px solid #cbd5e1; margin-top: 10px; padding-top: 10px; }
@@ -197,6 +203,8 @@ export class RestoreToggle {
   private button: HTMLButtonElement;
   private panel: HTMLElement;
   private snippets: HTMLElement;
+  private moveButton: HTMLButtonElement;
+  private placement: 'left' | 'right' = 'right';
 
   constructor(onClick: () => void) {
     this.host = document.createElement('tw-pii-restore-toggle');
@@ -207,23 +215,44 @@ export class RestoreToggle {
     this.button.addEventListener('click', onClick);
     this.panel = document.createElement('section');
     this.panel.className = 'panel';
+    const header = document.createElement('div');
+    header.className = 'header';
     const title = document.createElement('p');
     title.className = 'title';
     title.textContent = '🛡 本機還原檢視器';
+    this.moveButton = document.createElement('button');
+    this.moveButton.type = 'button';
+    this.moveButton.className = 'move';
+    this.moveButton.addEventListener('click', () => this.moveToOtherSide());
+    header.append(title, this.moveButton);
     const notice = document.createElement('p');
     notice.className = 'notice';
     notice.textContent = '真值只顯示在擴充套件的封閉區域；AI 網頁仍保留佔位符。';
     this.snippets = document.createElement('div');
-    this.panel.append(title, notice, this.snippets);
+    this.panel.append(header, notice, this.snippets);
     root.append(style, this.panel, this.button);
+    this.updatePlacement();
     this.host.hidden = true;
     document.documentElement.appendChild(this.host);
+  }
+
+  private moveToOtherSide(): void {
+    this.placement = this.placement === 'right' ? 'left' : 'right';
+    this.updatePlacement();
+  }
+
+  private updatePlacement(): void {
+    const onLeft = this.placement === 'left';
+    this.button.classList.toggle('left', onLeft);
+    this.panel.classList.toggle('left', onLeft);
+    this.moveButton.textContent = onLeft ? '移到右側' : '移到左側';
+    this.moveButton.title = '如果檢視器擋住網站操作，可移到畫面另一側';
   }
 
   render(visible: boolean, enabled: boolean, restoredCount: number, snippets: string[] = []): void {
     this.host.hidden = !visible;
     this.host.style.display = visible ? '' : 'none';
-    this.button.className = enabled ? 'on' : '';
+    this.button.classList.toggle('on', enabled);
     this.button.textContent = enabled
       ? `🛡 本機檢視 ${restoredCount} 處 · 點我關閉`
       : '👁 AI 頁面顯示佔位符 · 點我本機還原';
