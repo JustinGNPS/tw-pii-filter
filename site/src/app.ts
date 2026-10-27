@@ -711,10 +711,9 @@ if (term) {
 // ────────────────────────────────────────────────────────────
 // 完整版 ①：擴充的回覆還原
 //
-// PageRestorer 是擴充的真品（extension/src/content/restorer.ts）。範圍限定在
-// 這個聊天視窗：頁面上其他地方刻意顯示佔位符（「雲端 AI 實際收到的」），不能被還原。
-// 回覆用 nodeValue 逐段寫入，模擬 ChatGPT（React）串流時更新 DOM 的方式 ——
-// 佔位符會被切在兩段之間，這正是要展示的情況。
+// PageRestorer 是擴充的真品（extension/src/content/restorer.ts）。它只觀察
+// 這個聊天視窗的佔位符，不修改 AI 網頁；還原結果顯示在範圍外的本機檢視卡片。
+// 回覆用 nodeValue 逐段寫入，模擬 ChatGPT（React）串流更新 DOM 的方式。
 // ────────────────────────────────────────────────────────────
 
 const rsChat = document.getElementById('rs-chat');
@@ -722,6 +721,7 @@ const rsReply = document.getElementById('rs-reply');
 const rsPlay = document.getElementById('rs-play') as HTMLButtonElement | null;
 const rsToggle = document.getElementById('rs-toggle') as HTMLButtonElement | null;
 const rsNote = document.getElementById('rs-note');
+const rsLocal = document.getElementById('rs-local');
 
 // 對照表：等同使用者剛才貼上時，擴充在本機存下的那一份
 const rsAllocator = new PlaceholderAllocator();
@@ -738,13 +738,15 @@ const RS_CHUNKS = [
 
 let rsPlaying = false;
 
-if (rsChat && rsReply && rsPlay && rsToggle && rsNote) {
+if (rsChat && rsReply && rsPlay && rsToggle && rsNote && rsLocal) {
   const restorer = new PageRestorer(
     null,
-    (count) => {
-      rsToggle.textContent = restorer.enabled ? '👁 看 AI 收到的版本' : '🛡 還原';
-      if (restorer.enabled && count > 0) rsNote.textContent = `已在本地還原 ${count} 處（標綠）· AI 自己編的 [TW_ID_9] 原樣保留`;
-      else if (!restorer.enabled) rsNote.textContent = '現在顯示的是雲端 AI 實際收到、實際回覆的內容';
+    (count, snippets) => {
+      rsToggle.textContent = restorer.enabled ? '👁 關閉本機檢視' : '🛡 開啟本機檢視';
+      rsLocal.hidden = !restorer.enabled || snippets.length === 0;
+      rsLocal.textContent = snippets.join('\n\n');
+      if (restorer.enabled && count > 0) rsNote.textContent = `封閉檢視器已在本機還原 ${count} 處；AI 網頁仍只有佔位符`;
+      else if (!restorer.enabled) rsNote.textContent = '目前只顯示雲端 AI 實際收到、實際回覆的佔位符版本';
     },
     rsChat,
   );

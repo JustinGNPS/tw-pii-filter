@@ -501,8 +501,8 @@ aider</pre>
 
     <h3>① 擴充的回覆還原<span class="pill low" style="margin-left:8px">可操作</span></h3>
     <p class="lead">
-      裝了擴充之後，ChatGPT 的回覆一邊串流出來、佔位符就一邊在你的電腦上換回真值（標綠色）。
-      右下角有一顆開關，隨時切回「AI 實際收到的版本」。
+      裝了擴充之後，AI 網頁仍只顯示佔位符；真值只出現在擴充的封閉本機檢視器，
+      不會寫回 ChatGPT／Claude 的網頁 DOM。下方開關可隨時開關本機檢視。
     </p>
     <div class="card chat" id="rs-chat">
       <div class="chat-head">
@@ -515,13 +515,14 @@ aider</pre>
       </div>
       <div class="composer composer-bar" style="margin-top:0">
         <button class="go" id="rs-play">模擬 AI 回覆</button>
-        <button class="chip" id="rs-toggle" disabled>👁 看 AI 收到的版本</button>
+        <button class="chip" id="rs-toggle" disabled>🛡 開啟本機檢視</button>
         <span class="hint" id="rs-note">送出時已在本地遮蔽，雲端 AI 只收到佔位符</span>
       </div>
     </div>
+    <div class="card" id="rs-local" hidden style="margin-top:12px;white-space:pre-wrap;border-color:#5eead4"></div>
     <p class="fine">
       還原與開關是擴充的真品：這一段直接 <code>import</code> 擴充的 <code>content/restorer.ts</code>。
-      只改文字節點的內容、不拆網頁結構（ChatGPT 是 React，拆了會壞）；輸入框一律不還原，否則送出去的就是真值。
+      真值只呈現在擴充建立的封閉區域，AI 網頁的文字節點與輸入框都不會被寫入明文。
       回覆裡若出現 AI 自己編的 <code>[TW_ID_9]</code>，會原樣保留、絕不猜測。
     </p>
 

@@ -337,6 +337,32 @@ def test_出現image時換成說明文字照常轉發_不再整個卡死(client)
     assert "本地個資過濾器" in sent
 
 
+@respx.mock
+def test_Claude_Code文字文件轉成訊息並在送出前遮蔽(client):
+    route = respx.post(f"{UPSTREAM}/chat/completions").mock(
+        return_value=_openai_sse_response(text="ok")
+    )
+    payload = _anthropic_payload("整理附件")
+    payload["messages"][0]["content"].append(
+        {
+            "type": "document",
+            "title": "customers.txt",
+            "source": {
+                "type": "text",
+                "media_type": "text/plain",
+                "data": "客戶身分證 A123456789，電話 0912-345-678",
+            },
+        }
+    )
+
+    response = client.post("/v1/messages", json=payload)
+
+    assert response.status_code == 200
+    sent = route.calls[0].request.content.decode("utf-8")
+    assert "A123456789" not in sent and "0912-345-678" not in sent
+    assert "[TW_ID_1]" in sent and "[TW_PHONE_M_1]" in sent
+
+
 def test_無效json回400(client):
     response = client.post(
         "/v1/messages",

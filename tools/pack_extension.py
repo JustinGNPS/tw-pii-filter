@@ -1,10 +1,10 @@
-"""建置瀏覽器擴充並打包成 zip，方便發給別人安裝。
+"""建置瀏覽器擴充並打包成 Chrome Web Store 可上傳的 zip。
 
     python tools/pack_extension.py
 
-產出 `release/tw-pii-filter-extension-v<版本>.zip`（`release/` 不進 git）。
-收到 zip 的人解壓縮後，到 chrome://extensions 開「開發人員模式」→
-「載入未封裝項目」→ 選解壓出來的資料夾即可，**不需要裝 Node.js**。
+產出 `release/tw-pii-filter-extension-v<版本>-chrome-web-store.zip`
+（`release/` 不進 git）。zip 根目錄直接是 manifest.json，既能上傳 Chrome
+Web Store，也能解壓後用「載入未封裝項目」測試，**不需要裝 Node.js**。
 
 版本號取自 `extension/public/manifest.json`，不另外維護一份，避免兩邊對不起來。
 """
@@ -31,6 +31,28 @@ def _npm(*args: str) -> None:
     subprocess.run([npm, *args], cwd=EXT_DIR, check=True)
 
 
+def package_dist(dist_dir: Path, out: Path) -> None:
+    """把已建置的 dist 打成 manifest 位於 zip 根目錄的上架包。"""
+    manifest_path = dist_dir / "manifest.json"
+    if not manifest_path.is_file():
+        raise FileNotFoundError(f"找不到擴充 manifest：{manifest_path}")
+
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    required = [*manifest.get("icons", {}).values()]
+    action_icon = manifest.get("action", {}).get("default_icon", {})
+    if isinstance(action_icon, dict):
+        required.extend(action_icon.values())
+    missing = sorted({item for item in required if not (dist_dir / item).is_file()})
+    if missing:
+        raise FileNotFoundError(f"manifest 引用的圖示不存在：{', '.join(missing)}")
+
+    out.parent.mkdir(exist_ok=True)
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as zf:
+        for path in sorted(dist_dir.rglob("*")):
+            if path.is_file():
+                zf.write(path, path.relative_to(dist_dir))
+
+
 def main() -> int:
     if not (EXT_DIR / "node_modules").exists():
         print("首次建置：安裝相依套件（npm ci，依 package-lock.json 鎖定版本）...")
@@ -41,15 +63,12 @@ def main() -> int:
     version = manifest["version"]
 
     RELEASE_DIR.mkdir(exist_ok=True)
-    out = RELEASE_DIR / f"tw-pii-filter-extension-v{version}.zip"
-    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as zf:
-        for path in sorted(DIST_DIR.rglob("*")):
-            if path.is_file():
-                # 解壓後要直接是可載入的資料夾，所以包一層固定的資料夾名稱
-                zf.write(path, Path(f"tw-pii-filter-extension-v{version}") / path.relative_to(DIST_DIR))
+    out = RELEASE_DIR / f"tw-pii-filter-extension-v{version}-chrome-web-store.zip"
+    package_dist(DIST_DIR, out)
 
     print(f"\n完成：{out}（{out.stat().st_size / 1024:.1f} KB）")
-    print("安裝方式：解壓縮 → chrome://extensions → 開「開發人員模式」→「載入未封裝項目」→ 選解壓出來的資料夾")
+    print("上架：把這個 zip 直接上傳 Chrome Web Store Developer Dashboard")
+    print("本機測試：解壓縮 → chrome://extensions → 開「開發人員模式」→「載入未封裝項目」")
     return 0
 
 

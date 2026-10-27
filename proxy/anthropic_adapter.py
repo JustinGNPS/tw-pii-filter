@@ -58,7 +58,7 @@ def _blocks_have_unsupported_type(blocks: Any) -> bool:
 
 
 def has_unsupported_content(payload: dict) -> bool:
-    """這個請求有沒有用到目前還不會翻譯的東西（圖片／文件附件）。"""
+    """media 前處理後是否仍殘留無法安全翻譯的文件 block。"""
     for message in payload.get("messages", []):
         if _blocks_have_unsupported_type(message.get("content")):
             return True

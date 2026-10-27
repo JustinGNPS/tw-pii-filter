@@ -61,6 +61,7 @@ ALL_TYPES = frozenset(RULE_TYPES) | frozenset(SEMANTIC_TYPES)
 _PERSISTED = ("mask_types", "risk_warning", "risk_reduction_policy", "image_policy", "document_policy")
 
 _ner_loading = False
+_ner_desired_enabled = config.ENABLE_NER
 _saved_loaded = False
 _lock = threading.Lock()
 
@@ -141,16 +142,23 @@ def _enable_ner_in_background() -> None:
         from core.ner.detector import detect_ner
 
         detect_ner("暖機")
-        config.ENABLE_NER = True
-        logger.info("語意層已開啟（由設定介面）")
+        with _lock:
+            # 模型載入期間使用者可能已把開關切回關閉。載入可以完成，
+            # 但是否啟用一定要服從「最後一次」操作，不能用舊請求覆蓋新設定。
+            if _ner_desired_enabled:
+                config.ENABLE_NER = True
+                logger.info("語意層已開啟（由設定介面）")
+            else:
+                logger.info("語意層載入完成，但使用者已取消開啟")
     except Exception as exc:  # noqa: BLE001
         logger.error("語意層載入失敗，維持關閉：%s", exc)
     finally:
-        _ner_loading = False
+        with _lock:
+            _ner_loading = False
 
 
 def _apply_clean(clean: dict[str, Any]) -> None:
-    global _ner_loading
+    global _ner_desired_enabled, _ner_loading
     if "mask_types" in clean:
         # 不在介面清單裡的型別（例如使用者在 .env 自訂的）維持原本的跳過設定
         others = config.SKIP_TYPES - ALL_TYPES
@@ -163,12 +171,15 @@ def _apply_clean(clean: dict[str, Any]) -> None:
         config.IMAGE_POLICY = clean["image_policy"]
     if "document_policy" in clean:
         config.DOCUMENT_POLICY = clean["document_policy"]
-    if "ner_enabled" in clean and clean["ner_enabled"] != config.ENABLE_NER:
-        if clean["ner_enabled"]:
-            if not _ner_loading:
+    if "ner_enabled" in clean:
+        requested = clean["ner_enabled"]
+        _ner_desired_enabled = requested
+        if requested:
+            if not config.ENABLE_NER and not _ner_loading:
                 _ner_loading = True
                 threading.Thread(target=_enable_ner_in_background, daemon=True).start()
         else:
+            # 即使目前仍是 False，也要記住取消要求；背景載入完成時會再確認。
             config.ENABLE_NER = False
 
 

@@ -173,16 +173,12 @@ ORGANIZATION x2   'mistral'  '`'
 → 更新本節第 1 層 → 決定哪些進白名單 → 更新 `DEFAULT_NER_ALLOW_TYPES` → 更新本節
 第 2、3 層。
 
-### ⚠️ 已知不一致：組合風險評分認得的型別比白名單多
+### 組合風險型別與白名單一致
 
-`core/risk/combination_risk.py` 的 `QUASI_IDENTIFIER_TYPES` 包含
-`ORGANIZATION`、`GOVERNMENT`、`SCENE`（見下方「準識別子的來源」），但這三種都在
-第 3 層、會被白名單擋掉，**在 proxy 這條路徑上永遠不會出現在 `spans` 裡**，
-因此它們的權重與建議文字目前是死碼。
-
-這不是 bug，是兩個決定先後做出來的結果（組合風險評分先，白名單後），但如果之後
-有人想讓機構名稱參與組合風險評分，要**同時**把它加進 `PII_NER_ALLOW_TYPES`，
-只改 `combination_risk.py` 不會有任何效果。
+`core/risk/combination_risk.py` 只替目前管線能可靠產生的 `ADDRESS`、`POSITION`、
+`COMPANY`、`AGE`、`GENDER` 設定權重。`ORGANIZATION`、`GOVERNMENT`、`SCENE`
+會被語意層白名單排除，也不再保留無法觸發的權重與建議文字。若未來更換或重新訓練
+語意偵測元件，要同時以實測資料調整白名單、風險權重與跨語言 parity 測試。
 
 ## 範例
 
@@ -322,11 +318,8 @@ Layer 1（規則層）與 Layer 2（語意層）抓的是「明確的個資」�
 
 `contributing_types` 目前涵蓋的類別分兩種來源：
 
-- **語意層 spans**：`ADDRESS` / `POSITION` / `COMPANY` / `ORGANIZATION` / `GOVERNMENT` / `SCENE`——來自 `extra_spans`（Layer 2 語意層結果），`compute_combination_risk` 直接檢查 Layer 4 仲裁後的 `spans` 裡有沒有這些型別
+- **語意層 spans**：`ADDRESS` / `POSITION` / `COMPANY`——來自 `extra_spans`（Layer 2 語意層結果），`compute_combination_risk` 直接檢查 Layer 4 仲裁後的 `spans` 裡有沒有這些型別
 - **獨立正則偵測**：`AGE` / `GENDER`——語意層模型沒有對應標籤，`compute_combination_risk` 自己對 `text` 做正則/關鍵字掃描，不需要透過 `spans` 帶入
-
-> ⚠️ `ORGANIZATION` / `GOVERNMENT` / `SCENE` 這三種雖然列在這裡，但已被語意層白名單
-> 排除（見上方「類別代碼」第 3 層），在 proxy 路徑上永遠不會出現在 `spans` 裡。
 
 因此若呼叫 `detect_all(text)` 時沒有傳入 `extra_spans`（未接語意層），`contributing_types` 只可能包含 `AGE`/`GENDER`；要看到 `ADDRESS`/`POSITION` 這類準識別子造成的風險，呼叫端必須先把語意層（`core.ner.detect_ner()`）的結果當 `extra_spans` 傳入。
 

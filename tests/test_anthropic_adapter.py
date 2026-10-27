@@ -2,8 +2,8 @@
 
 涵蓋範圍是 7 步計畫第 3 步「純文字最小遮蔽」+ 第 4 步「工具呼叫遞迴處理」：
 Anthropic Messages API 請求／回覆格式，與 AIR（OpenAI 相容格式）之間的
-轉換，包含 `tool_use`/`tool_result`。圖片／文件附件（`image`/`document`）
-尚未支援，相關測試只驗證「會被正確擋下」，不驗證轉換結果。
+轉換，包含 `tool_use`/`tool_result`。圖片／文件附件先經 `proxy.media` 處理；
+本檔另驗證圖片放行時的格式轉換與漏網文件的防禦性阻擋。
 """
 
 import json

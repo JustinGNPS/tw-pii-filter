@@ -12,6 +12,14 @@ npm run build
 
 到 `chrome://extensions` → 開啟右上角「開發人員模式」→「載入未封裝項目」→ 選 `extension/dist`。
 
+要產生可直接上傳 Chrome Web Store 的 ZIP：
+
+```bash
+python tools/pack_extension.py
+```
+
+詳見 [Chrome Web Store 上架與驗收](../docs/chrome_web_store.md)。
+
 ## 兩種使用方式
 
 **1. Popup（最快的 demo 方式）**
@@ -84,7 +92,7 @@ cd extension && npm test
 - [x] Layer 3 組合風險評分（TypeScript 移植 + 面板提示）
 - [x] 語意層型別白名單（`NER_ALLOW_TYPES`，與 proxy 一致）
 - [ ] 語意層（transformers.js + NER 模型）—— 技術風險高，見下
-- [x] AI 回覆還原（佔位符在本地換回真值、可切換看 AI 收到的版本；B 實作，見 `src/restore.ts`、`src/content/restorer.ts`）
+- [x] AI 回覆安全檢視（AI 網頁 DOM 保留佔位符，真值只在 closed Shadow DOM 顯示；見 `src/restore.ts`、`src/content/restorer.ts`）
 
 ## Layer 3：組合風險評分
 

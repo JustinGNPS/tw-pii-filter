@@ -126,6 +126,18 @@ export class PlaceholderAllocator {
 /** 配號狀態的保留期限：超過就丟棄重新開始，避免對照表無限累積。 */
 export const STATE_TTL_MS = 12 * 60 * 60 * 1000; // 12 小時
 
+function isPlaceholderState(value: unknown): value is PlaceholderState {
+  if (!value || typeof value !== 'object') return false;
+  const candidate = value as Partial<PlaceholderState>;
+  return typeof candidate.updatedAt === 'number'
+    && !!candidate.assigned && typeof candidate.assigned === 'object'
+    && !!candidate.counters && typeof candidate.counters === 'object';
+}
+
+export function isStateExpired(state: PlaceholderState, now = Date.now()): boolean {
+  return now - state.updatedAt > STATE_TTL_MS;
+}
+
 /**
  * 以「對話」為單位的儲存 key。
  *
@@ -139,8 +151,12 @@ export function conversationKey(url: URL): string {
 export async function loadState(key: string): Promise<PlaceholderState> {
   try {
     const stored = await chrome.storage.local.get(key);
-    const state = stored[key] as PlaceholderState | undefined;
-    if (!state || Date.now() - state.updatedAt > STATE_TTL_MS) return emptyState();
+    const state = stored[key] as unknown;
+    if (!isPlaceholderState(state) || isStateExpired(state)) {
+      // 「過期」必須是真的從磁碟刪除，不只是這次不載入。
+      if (state !== undefined) await chrome.storage.local.remove(key);
+      return emptyState();
+    }
     return state;
   } catch {
     return emptyState();
@@ -152,5 +168,23 @@ export async function saveState(key: string, state: PlaceholderState): Promise<v
     await chrome.storage.local.set({ [key]: state });
   } catch (error) {
     console.warn('[tw-pii-filter] 配號狀態寫入失敗', error);
+  }
+}
+
+/**
+ * 啟動時清除所有過期的對話狀態，以及舊版留下、還原功能完全不會使用的
+ * `sessions` 明文歷史。這些資料含原始個資，不能只靠「下次讀到再忽略」。
+ */
+export async function purgeStoredMappings(now = Date.now()): Promise<number> {
+  try {
+    const stored = await chrome.storage.local.get(null);
+    const keys = Object.entries(stored)
+      .filter(([key, value]) => key === 'sessions'
+        || (key.startsWith('ph:') && (!isPlaceholderState(value) || isStateExpired(value, now))))
+      .map(([key]) => key);
+    if (keys.length > 0) await chrome.storage.local.remove(keys);
+    return keys.length;
+  } catch {
+    return 0;
   }
 }

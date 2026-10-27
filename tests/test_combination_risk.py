@@ -61,6 +61,15 @@ class TestScoreCalculation:
         assert result["score"] == 0.0
         assert result["contributing_types"] == []
 
+    def test_語意白名單排除型別不保留無效風險權重(self):
+        spans = [
+            {"start": 0, "end": 1, "type": t, "text": "x"}
+            for t in ("ORGANIZATION", "GOVERNMENT", "SCENE")
+        ]
+        result = compute_combination_risk("一般技術文字", spans)
+        assert result["score"] == 0.0
+        assert result["contributing_types"] == []
+
 
 # ---------------------------------------------------------------------------
 # cap 在 1.0 的邊界情況
@@ -68,15 +77,12 @@ class TestScoreCalculation:
 
 class TestScoreCap:
     def test_score_capped_at_one(self):
-        """所有型別權重加總理論上是 0.35+0.30+0.20+0.15*4+0.10 = 1.55，
+        """所有啟用型別權重加總理論上是 0.35+0.30+0.20+0.15+0.15 = 1.15，
         遠超過 1.0，驗證確實被封頂。"""
         spans = [
             {"start": 0, "end": 1, "type": "ADDRESS", "text": "x"},
             {"start": 1, "end": 2, "type": "POSITION", "text": "x"},
             {"start": 2, "end": 3, "type": "COMPANY", "text": "x"},
-            {"start": 3, "end": 4, "type": "ORGANIZATION", "text": "x"},
-            {"start": 4, "end": 5, "type": "GOVERNMENT", "text": "x"},
-            {"start": 5, "end": 6, "type": "SCENE", "text": "x"},
         ]
         result = compute_combination_risk("他35歲，男性。", spans)
         assert result["score"] == 1.0
@@ -86,7 +92,7 @@ class TestScoreCap:
         spans = [
             {"start": i, "end": i + 1, "type": t, "text": "x"}
             for i, t in enumerate(
-                ["ADDRESS", "POSITION", "COMPANY", "ORGANIZATION", "GOVERNMENT", "SCENE"]
+                ["ADDRESS", "POSITION", "COMPANY"]
             )
         ]
         result = compute_combination_risk("民國70年次，女性。", spans)
