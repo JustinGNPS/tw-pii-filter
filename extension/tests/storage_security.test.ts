@@ -76,6 +76,8 @@ describe('新對話分頁隔離', () => {
 
     await tabA.save(newChat, stateFor('NAME', '王小明'));
     await tabB.save(newChat, stateFor('NAME', '陳美玲'));
+    tabA.markNewChatSubmitted(newChat);
+    tabB.markNewChatSubmitted(newChat);
     await tabA.adoptNewChatState(newChat, new URL('https://chatgpt.com/c/a'));
     await tabB.adoptNewChatState(newChat, new URL('https://chatgpt.com/c/b'));
 
@@ -84,6 +86,32 @@ describe('新對話分頁隔離', () => {
     expect(reverseMap(stateA).get('[NAME_1]')).toBe('王小明');
     expect(reverseMap(stateB).get('[NAME_1]')).toBe('陳美玲');
     expect(await loadState('ph:chatgpt.com/')).toMatchObject({ assigned: {} });
+  });
+
+  it('未送出就切到沒有本機對照表的舊對話時也不會搬移暫存', async () => {
+    installStorageMock();
+    const tab = new ConversationStateStore();
+    const newChat = new URL('https://chatgpt.com/');
+    const oldChat = new URL('https://chatgpt.com/c/old-without-local-state');
+
+    await tab.save(newChat, stateFor('NAME', '未送出的暫存姓名'));
+    expect(await tab.adoptNewChatState(newChat, oldChat)).toBe(false);
+
+    expect(reverseMap(await tab.load(newChat)).size).toBe(0);
+    expect(reverseMap(await loadState('ph:chatgpt.com/c/old-without-local-state')).size).toBe(0);
+  });
+
+  it('確認送出後才把新對話暫存搬到新取得的對話 ID', async () => {
+    installStorageMock();
+    const tab = new ConversationStateStore();
+    const newChat = new URL('https://chatgpt.com/');
+    const createdChat = new URL('https://chatgpt.com/c/created');
+
+    await tab.save(newChat, stateFor('NAME', '已送出的姓名'));
+    expect(tab.markNewChatSubmitted(newChat)).toBe(true);
+    expect(await tab.adoptNewChatState(newChat, createdChat)).toBe(true);
+
+    expect(reverseMap(await loadState('ph:chatgpt.com/c/created')).get('[NAME_1]')).toBe('已送出的姓名');
   });
 
   it('未送出就切到既有對話時會丟棄暫存，之後的新對話不會沿用舊資料', async () => {
@@ -105,7 +133,8 @@ describe('新對話分頁隔離', () => {
     const newChat = new URL('https://chatgpt.com/');
 
     await tab.save(newChat, stateFor('NAME', '不該跨站的人'));
-    expect(await tab.adoptNewChatState(newChat, new URL('https://claude.ai/new'))).toBe(false);
+    tab.markNewChatSubmitted(newChat);
+    expect(await tab.adoptNewChatState(newChat, new URL('https://claude.ai/chat/abc'))).toBe(false);
 
     expect(reverseMap(await tab.load(newChat)).size).toBe(0);
     expect(reverseMap(await loadState('ph:claude.ai/chat/abc')).size).toBe(0);

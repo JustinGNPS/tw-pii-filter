@@ -22,6 +22,7 @@ function copyState(state: PlaceholderState): PlaceholderState {
 
 export class ConversationStateStore {
   private pendingNewChatState: PlaceholderState | null = null;
+  private pendingNewChatSubmitted = false;
 
   async load(url: URL): Promise<PlaceholderState> {
     if (isNewChatPath(url.pathname)) {
@@ -32,10 +33,17 @@ export class ConversationStateStore {
 
   async save(url: URL, state: PlaceholderState): Promise<void> {
     if (isNewChatPath(url.pathname)) {
+      if (!this.pendingNewChatState) this.pendingNewChatSubmitted = false;
       this.pendingNewChatState = copyState(state);
       return;
     }
     await saveState(conversationKey(url), state);
+  }
+
+  markNewChatSubmitted(url: URL): boolean {
+    if (!isNewChatPath(url.pathname) || !this.pendingNewChatState) return false;
+    this.pendingNewChatSubmitted = true;
+    return true;
   }
 
   async adoptNewChatState(previous: URL, next: URL): Promise<boolean> {
@@ -47,12 +55,19 @@ export class ConversationStateStore {
     // 跨站導覽絕不搬移對照表。
     if (previous.host !== next.host) {
       this.pendingNewChatState = null;
+      this.pendingNewChatSubmitted = false;
       return false;
     }
     if (isNewChatPath(next.pathname)) return false;
 
     const pending = this.pendingNewChatState;
+    const submitted = this.pendingNewChatSubmitted;
     this.pendingNewChatState = null;
+    this.pendingNewChatSubmitted = false;
+
+    // 只有真的按下送出後，網站把新對話網址換成對話 ID，才能搬移暫存。
+    // 單靠 URL 無法分辨這種情況和「從側欄點進沒有本機對照表的舊對話」。
+    if (!submitted) return false;
 
     const existing = await this.load(next);
     if (Object.keys(existing.assigned).length > 0) return false;
