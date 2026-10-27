@@ -26,6 +26,18 @@ export function isEditable(target: EventTarget | null): target is HTMLElement {
 }
 
 /**
+ * contenteditable 的事件 target 可能是游標所在的內層 `<p>`，而 keydown target
+ * 卻是取得焦點的外層 editor。統一成最外層仍可編輯的根節點，才能把兩次事件
+ * 判定為同一個聊天輸入框。input／textarea 則原樣回傳。
+ */
+export function editableRoot(element: HTMLElement): HTMLElement {
+  if (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement) return element;
+  let root = element;
+  while (root.parentElement?.isContentEditable) root = root.parentElement;
+  return root;
+}
+
+/**
  * 在目前的游標位置插入文字（會取代選取範圍），語意等同使用者手動貼上。
  *
  * @returns 是否插入成功

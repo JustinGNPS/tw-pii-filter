@@ -22,14 +22,15 @@ import {
   PlaceholderAllocator,
   purgeStoredMappings,
 } from '../placeholder';
-import { reverseMap } from '../restore';
+import { isNewChatPath, reverseMap } from '../restore';
 import { filterEnabled, loadEnabledTypes } from '../settings';
 import { findNearMisses } from '../explain';
 import { showNearMissHint } from './hint';
-import { insertText, isEditable } from './insert';
+import { editableRoot, insertText, isEditable } from './insert';
 import { showPanel } from './panel';
 import { PageRestorer, RestoreToggle } from './restorer';
 import { ConversationStateStore } from './conversation_state';
+import { shouldMarkFromControl, shouldMarkFromKeydown } from './submission_guard';
 
 /** 防止我們自己插入的文字再次觸發攔截，造成無限迴圈。 */
 let isInserting = false;
@@ -40,7 +41,11 @@ let panelOpen = false;
 /** 每個分頁各自一份；新對話尚無 ID 時絕不寫入跨分頁共用的 storage key。 */
 const stateStore = new ConversationStateStore();
 
+/** 這次新對話中，實際被插入遮蔽文字的聊天輸入框。 */
+let pendingNewChatInput: HTMLElement | null = null;
+
 async function handleText(element: HTMLElement, text: string): Promise<void> {
+  element = editableRoot(element);
   const detected = detectAll(text);
   // 使用者在 popup 關掉的類型當作沒偵測到（見 settings.ts）
   const spans = filterEnabled(detected.spans, await loadEnabledTypes());
@@ -96,6 +101,7 @@ async function handleText(element: HTMLElement, text: string): Promise<void> {
     insertText(element, maskedText);
 
     await stateStore.save(currentUrl, allocator.toState());
+    if (isNewChatPath(currentUrl.pathname)) pendingNewChatInput = element;
     void refreshRestore();
   } finally {
     isInserting = false;
@@ -137,6 +143,98 @@ chrome.runtime.onMessage.addListener((message) => {
 
   void handleText(element, text);
 });
+
+/**
+ * 新對話暫存只有在使用者真的送出第一則訊息後，才能跟著新的對話網址搬移。
+ * 只看 URL 變化無法分辨「送出後取得 ID」和「從側欄點進舊對話」。
+ */
+function markNewChatSubmitted(): void {
+  stateStore.markNewChatSubmitted(new URL(location.href));
+}
+
+function pendingInputHasText(): boolean {
+  const input = pendingNewChatInput;
+  if (!input || !input.isConnected) return false;
+  if (input instanceof HTMLInputElement || input instanceof HTMLTextAreaElement) {
+    return input.value.trim().length > 0;
+  }
+  return (input.textContent ?? '').trim().length > 0;
+}
+
+function eventComesFromPendingInput(target: EventTarget | null): boolean {
+  return target instanceof Node
+    && pendingNewChatInput !== null
+    && (target === pendingNewChatInput || pendingNewChatInput.contains(target));
+}
+
+function sharesPendingComposer(control: HTMLElement): boolean {
+  const input = pendingNewChatInput;
+  if (!input || !input.isConnected) return false;
+
+  const form = input.closest('form');
+  if (form) return form.contains(control);
+
+  let ancestor = input.parentElement;
+  for (let depth = 0; ancestor && depth < 6; depth += 1) {
+    if (ancestor === document.body) return false;
+    if (ancestor.contains(control)) return true;
+    ancestor = ancestor.parentElement;
+  }
+  return false;
+}
+
+document.addEventListener(
+  'submit',
+  (event) => {
+    if (
+      event.target instanceof HTMLFormElement
+      && pendingNewChatInput !== null
+      && event.target.contains(pendingNewChatInput)
+      && pendingInputHasText()
+    ) markNewChatSubmitted();
+  },
+  true,
+);
+
+document.addEventListener(
+  'keydown',
+  (event) => {
+    if (shouldMarkFromKeydown(
+      event,
+      eventComesFromPendingInput(event.target),
+      pendingInputHasText(),
+    )) markNewChatSubmitted();
+  },
+  true,
+);
+
+document.addEventListener(
+  'click',
+  (event) => {
+    if (!(event.target instanceof Element)) return;
+    const control = event.target.closest<HTMLElement>('button, [role="button"]');
+    if (!control) return;
+
+    const hint = [
+      control.getAttribute('aria-label'),
+      control.getAttribute('title'),
+      control.getAttribute('data-testid'),
+      control.getAttribute('name'),
+    ].filter(Boolean).join(' ').toLowerCase();
+    if (shouldMarkFromControl(
+      {
+        disabled: control.getAttribute('aria-disabled') === 'true'
+          || (control instanceof HTMLButtonElement && control.disabled),
+        tagName: control.tagName,
+        type: control.getAttribute('type'),
+        hint,
+      },
+      sharesPendingComposer(control),
+      pendingInputHasText(),
+    )) markNewChatSubmitted();
+  },
+  true,
+);
 
 // ─────────────────────────────────────────────────────────────
 // 還原：AI 回覆裡的佔位符在本地換回真值（雲端從頭到尾只看到佔位符）
@@ -190,6 +288,7 @@ async function onToggleClick(): Promise<void> {
  */
 async function adoptNewChatState(prev: URL, next: URL): Promise<void> {
   await stateStore.adoptNewChatState(prev, next);
+  if (!isNewChatPath(next.pathname)) pendingNewChatInput = null;
 }
 
 async function initRestore(): Promise<void> {
