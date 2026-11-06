@@ -299,8 +299,10 @@ python -m venv .venv
 | 啟用語意層（NER） | `PII_ENABLE_NER` | 關閉（僅規則層） |
 | 啟用組合風險提示 | `PII_ENABLE_RISK_WARNING` | 開啟 |
 | 對照表閒置逾時（秒，`0` 代表停用） | `PROXY_MAPPING_IDLE_TIMEOUT` | `1800`（30 分鐘） |
-| 圖片處理（`remove`／`allow`） | `PII_IMAGE_POLICY` | `remove`：換成說明文字（圖片內容看不到，寧可不送） |
-| PDF 處理（`extract`／`remove`） | `PII_DOCUMENT_POLICY` | `extract`：本機轉文字後照常遮蔽（見 `proxy/media.py`） |
+| 圖片處理（`ocr`／`remove`／`allow`） | `PII_IMAGE_POLICY` | `ocr`：本機辨識後照常遮蔽；失敗就移除，不送原圖 |
+| PDF 處理（`extract`／`remove`） | `PII_DOCUMENT_POLICY` | `extract`：本機抽字；掃描版逐頁 OCR，之後照常遮蔽（見 `proxy/media.py`） |
+| OCR 最低行信心 | `PII_OCR_MIN_CONFIDENCE` | `0.60`；任一文字行低於門檻就整份安全移除 |
+| OCR 資源上限 | `PII_OCR_MAX_IMAGE_BYTES`／`PII_OCR_MAX_IMAGE_PIXELS`／`PII_OCR_MAX_PDF_PAGES` | 15 MB／2500 萬像素／10 頁 |
 
 上游 base URL 沒設定時，proxy **仍會正常啟動**（啟動摘要會印一行 WARNING），但每個轉發請求都會回 `502` 與一則指出該設哪個變數的訊息：
 

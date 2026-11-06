@@ -8,6 +8,9 @@
  * （有完整 DOM、生命週期可控），不會放進 service worker。
  */
 
+import { SEMANTIC_MESSAGE } from '../semantic';
+import { fetchSemanticPayload } from './semantic_fetch';
+
 const MENU_ID = 'tw-pii-filter-process-selection';
 
 chrome.runtime.onInstalled.addListener(() => {
@@ -26,4 +29,22 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
     type: 'PROCESS_SELECTION',
     text: info.selectionText ?? '',
   });
+});
+
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message?.type !== SEMANTIC_MESSAGE) return false;
+  if (typeof message.text !== 'string') {
+    sendResponse({ ok: false, error: '語意分析文字格式錯誤' });
+    return false;
+  }
+
+  void fetchSemanticPayload(message.text)
+    .then((data) => sendResponse({ ok: true, data }))
+    .catch((error: unknown) => {
+      const messageText = error instanceof Error ? error.message : '無法連線本機語意服務';
+      // 不把原文寫入 console；錯誤只包含連線或設定狀態。
+      console.warn('[tw-pii-filter] 本機語意分析失敗：', messageText);
+      sendResponse({ ok: false, error: messageText });
+    });
+  return true;
 });

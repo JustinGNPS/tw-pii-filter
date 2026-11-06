@@ -32,7 +32,7 @@ from pathlib import Path
 from typing import Any
 
 from core.risk import reduction
-from proxy import config
+from proxy import config, ocr
 
 logger = logging.getLogger("proxy")
 
@@ -75,12 +75,17 @@ def ner_available() -> bool:
         return True
 
 
+def ocr_available() -> bool:
+    return ocr.available()
+
+
 def current() -> dict[str, Any]:
     return {
         "mask_types": sorted(ALL_TYPES - config.SKIP_TYPES),
         "ner_enabled": config.ENABLE_NER,
         "ner_available": ner_available(),
         "ner_loading": _ner_loading,
+        "ocr_available": ocr_available(),
         "risk_warning": config.ENABLE_RISK_WARNING,
         "risk_reduction_policy": config.RISK_REDUCTION_POLICY,
         "image_policy": config.IMAGE_POLICY,
@@ -121,6 +126,8 @@ def _validate(data: dict[str, Any]) -> dict[str, Any]:
         elif key == "image_policy":
             if value not in config.IMAGE_POLICIES:
                 raise ValueError(f"image_policy 可用值：{', '.join(config.IMAGE_POLICIES)}")
+            if value == "ocr" and not ocr_available():
+                raise ValueError("本機 OCR 套件尚未安裝（pip install -r proxy/requirements.txt）")
             clean[key] = value
         elif key == "document_policy":
             if value not in config.DOCUMENT_POLICIES:

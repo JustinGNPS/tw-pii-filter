@@ -15,7 +15,7 @@
  * 右鍵選單保留為次要入口，用來處理「已經打在輸入框裡」的文字。
  */
 
-import { detectAll } from '../core';
+import { detectAll, type Span } from '../core';
 import { maskText } from '../masking';
 import {
   conversationKey,
@@ -23,9 +23,10 @@ import {
   purgeStoredMappings,
 } from '../placeholder';
 import { isNewChatPath, reverseMap } from '../restore';
-import { filterEnabled, loadEnabledTypes } from '../settings';
+import { filterEnabled, loadEnabledTypes, loadSemanticEnabled } from '../settings';
+import { requestSemanticScan } from '../semantic';
 import { findNearMisses } from '../explain';
-import { showNearMissHint } from './hint';
+import { showNearMissHint, showSemanticProgress } from './hint';
 import { editableRoot, insertText, isEditable } from './insert';
 import { showPanel } from './panel';
 import { PageRestorer, RestoreToggle } from './restorer';
@@ -46,7 +47,20 @@ let pendingNewChatInput: HTMLElement | null = null;
 
 async function handleText(element: HTMLElement, text: string): Promise<void> {
   element = editableRoot(element);
-  const detected = detectAll(text);
+  let semanticWarning: string | null = null;
+  let extraSpans: Span[] | undefined;
+  if (await loadSemanticEnabled()) {
+    const closeProgress = showSemanticProgress();
+    try {
+      extraSpans = (await requestSemanticScan(text)).spans;
+    } catch (error) {
+      semanticWarning = error instanceof Error ? error.message : '無法連線本機語意服務';
+    } finally {
+      closeProgress();
+    }
+  }
+
+  const detected = detectAll(text, extraSpans);
   // 使用者在 popup 關掉的類型當作沒偵測到（見 settings.ts）
   const spans = filterEnabled(detected.spans, await loadEnabledTypes());
   const { combination_risk } = detected;
@@ -60,7 +74,7 @@ async function handleText(element: HTMLElement, text: string): Promise<void> {
   // ⚠️ 條件刻意包含組合風險：像「35歲男性，住新竹，資深後端工程師」這種文字
   // 一個 span 都抓不到，但正是報告 4.3 講的「隱含身分」情境（洩漏率 95%）。
   // 若只看 spans 就放行，面板等於告訴使用者「沒問題」——那比不提醒更糟。
-  if (spans.length === 0 && !risk) {
+  if (spans.length === 0 && !risk && !semanticWarning) {
     isInserting = true;
     insertText(element, text);
     isInserting = false;
@@ -80,7 +94,7 @@ async function handleText(element: HTMLElement, text: string): Promise<void> {
   panelOpen = true;
   let decision;
   try {
-    decision = await showPanel(spans, previewPlaceholders, risk);
+    decision = await showPanel(spans, previewPlaceholders, risk, semanticWarning);
   } finally {
     panelOpen = false;
   }

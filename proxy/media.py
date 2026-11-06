@@ -17,9 +17,10 @@ agent 讀到圖片或 PDF 時，內容是 base64 編碼的二進位資料。偵�
 | 內容 | 預設 | 做法 |
 |---|---|---|
 | PDF（有文字層） | extract | 本機抽出文字，換成文字 block —— 之後由 `masker` 照一般文字遮蔽 |
-| PDF（掃描版，沒有文字層） | — | 抽不出字，等同看不見內容，換成說明文字 |
+| PDF（掃描版，沒有文字層） | extract | 本機逐頁 OCR；任一頁失敗就整份移除 |
 | 純文字文件（Anthropic `source.type == "text"`） | — | 本來就是文字，直接換成文字 block |
-| 圖片 | remove | 換成一行說明文字；AI 知道這裡原本有圖，工作階段不會卡死 |
+| 圖片 | ocr | 本機 OCR，換成文字 block；失敗就移除 |
+| 圖片（`remove`） | — | 換成一行說明文字；AI 知道這裡原本有圖，工作階段不會卡死 |
 | 圖片（`allow`） | — | 照原樣送出，第一次看到時 log 提醒 |
 
 換成的說明文字裡**不含任何原始內容**，只有檔名（若有）與原因。
@@ -48,7 +49,7 @@ from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import Any
 
-from proxy import config
+from proxy import config, ocr
 
 logger = logging.getLogger("proxy")
 
@@ -70,16 +71,24 @@ _seen: OrderedDict[str, None] = OrderedDict()
 
 @dataclass
 class MediaReport:
+    images_ocr: int = 0
     images_removed: int = 0
     images_allowed: int = 0
     documents_extracted: int = 0
+    documents_ocr: int = 0
     documents_removed: int = 0
     # 第一次看到的項目（用來印 log），格式：(種類, 說明)
     new_items: list[tuple[str, str]] = field(default_factory=list)
 
     @property
     def changed(self) -> bool:
-        return bool(self.images_removed or self.documents_extracted or self.documents_removed)
+        return bool(
+            self.images_ocr
+            or self.images_removed
+            or self.documents_extracted
+            or self.documents_ocr
+            or self.documents_removed
+        )
 
 
 def _note(text: str) -> str:
@@ -150,6 +159,8 @@ def extract_pdf_text(data: bytes) -> str | None:
         reader = PdfReader(io.BytesIO(data))
         if reader.is_encrypted:
             reader.decrypt("")  # 只有「無密碼加密」打得開；有密碼的會在下面丟例外
+        if len(reader.pages) > config.OCR_MAX_PDF_PAGES:
+            raise ValueError(f"PDF 超過 {config.OCR_MAX_PDF_PAGES} 頁上限")
         pages = [_fix_radicals(page.extract_text() or "") for page in reader.pages]
         text = "\n\n".join(p.strip() for p in pages if p.strip())
     except Exception as exc:  # noqa: BLE001 - 壞掉的 PDF 不能讓整個請求失敗
@@ -164,6 +175,49 @@ def extract_pdf_text(data: bytes) -> str | None:
     return text
 
 
+def _xobjects_contain_image(xobjects: Any, seen: set[int]) -> bool:
+    """遞迴檢查 PDF XObject；Form 裡還可能再包圖片。"""
+    if xobjects is None:
+        return False
+    xobjects = xobjects.get_object()
+    marker = id(xobjects)
+    if marker in seen:
+        return False
+    seen.add(marker)
+    for reference in xobjects.values():
+        obj = reference.get_object()
+        subtype = str(obj.get("/Subtype") or "")
+        if subtype == "/Image":
+            return True
+        if subtype == "/Form":
+            resources = obj.get("/Resources")
+            if resources is not None:
+                resources = resources.get_object()
+                if _xobjects_contain_image(resources.get("/XObject"), seen):
+                    return True
+    return False
+
+
+def pdf_contains_images(data: bytes) -> bool | None:
+    """PDF 是否含點陣圖片；無法安全檢查時回 None，呼叫端應失敗關閉。"""
+    try:
+        from pypdf import PdfReader
+
+        reader = PdfReader(io.BytesIO(data))
+        if len(reader.pages) > config.OCR_MAX_PDF_PAGES:
+            return None
+        for page in reader.pages:
+            resources = page.get("/Resources")
+            if resources is not None:
+                resources = resources.get_object()
+                if _xobjects_contain_image(resources.get("/XObject"), set()):
+                    return True
+        return False
+    except Exception as exc:  # noqa: BLE001
+        logger.info("無法檢查 PDF 是否含圖片，將安全移除：%s", exc)
+        return None
+
+
 def _document_source(block: dict) -> tuple[str, str | bytes | None, str]:
     """把三種格式的文件 block 統一成 (種類, 內容, 檔名)。
 
@@ -175,6 +229,8 @@ def _document_source(block: dict) -> tuple[str, str | bytes | None, str]:
         title = block.get("title") or ""
         stype = source.get("type")
         if stype == "base64" and source.get("media_type") == "application/pdf":
+            if len(source.get("data") or "") > config.OCR_MAX_IMAGE_BYTES * 2:
+                return "too_large", None, title
             try:
                 return "pdf", base64.b64decode(source.get("data") or ""), title
             except (binascii.Error, ValueError):
@@ -195,6 +251,8 @@ def _document_source(block: dict) -> tuple[str, str | bytes | None, str]:
     filename = holder.get("filename") or ""
     file_data = holder.get("file_data")
     if isinstance(file_data, str):
+        if len(file_data) > config.OCR_MAX_IMAGE_BYTES * 2:
+            return "too_large", None, filename
         decoded = _decode_data_url(file_data)
         if decoded is None:  # 有些用戶端只給純 base64、不帶 data: 前綴
             try:
@@ -217,6 +275,48 @@ def _image_identity(block: dict) -> str:
     return _digest(url or block.get("file_id") or "")
 
 
+def _decode_image_content(block: dict) -> tuple[bytes | None, str]:
+    """取出三種 API 圖片 block 的本機 bytes；遠端 URL／file_id 不主動下載。"""
+    btype = block.get("type")
+    encoded: str | None = None
+    media_type = ""
+    if btype == "image":
+        source = block.get("source") or {}
+        media_type = str(source.get("media_type") or "")
+        if source.get("type") == "base64" and isinstance(source.get("data"), str):
+            encoded = source["data"]
+        elif isinstance(source.get("url"), str):
+            if len(source["url"]) > config.OCR_MAX_IMAGE_BYTES * 2:
+                return None, "圖片超過大小上限"
+            decoded = _decode_data_url(source["url"])
+            if decoded:
+                media_type, data = decoded
+                return (data, "") if media_type.startswith("image/") else (None, "附件不是圖片格式")
+    else:
+        value = block.get("image_url")
+        if isinstance(value, dict):
+            value = value.get("url")
+        if isinstance(value, str):
+            if len(value) > config.OCR_MAX_IMAGE_BYTES * 2:
+                return None, "圖片超過大小上限"
+            decoded = _decode_data_url(value)
+            if decoded:
+                media_type, data = decoded
+                return (data, "") if media_type.startswith("image/") else (None, "附件不是圖片格式")
+
+    if encoded is None:
+        return None, "只有遠端網址或 file_id，無法在本機安全取得圖片"
+    if media_type and not media_type.startswith("image/"):
+        return None, "附件不是圖片格式"
+    # 解碼前先限制 base64 字串，避免惡意附件用超大字串耗盡記憶體。
+    if len(encoded) > config.OCR_MAX_IMAGE_BYTES * 2:
+        return None, "圖片超過大小上限"
+    try:
+        return base64.b64decode(encoded, validate=False), ""
+    except (binascii.Error, ValueError):
+        return None, "圖片 base64 無法解碼"
+
+
 def _handle_image(block: dict, report: MediaReport) -> dict | None:
     """回傳要取代成的 block；None 代表保留原樣。"""
     ident = _image_identity(block)
@@ -225,6 +325,31 @@ def _handle_image(block: dict, report: MediaReport) -> dict | None:
         if _first_time("img-allow:" + ident):
             report.new_items.append(("圖片", "照原樣送出（未檢查內容）"))
         return None
+
+    if config.IMAGE_POLICY == "ocr":
+        data, reason = _decode_image_content(block)
+        result = ocr.extract_image_text(data) if data is not None else ocr.OCRResult(reason=reason)
+        if result.ok:
+            report.images_ocr += 1
+            if _first_time("img-ocr:" + ident):
+                report.new_items.append(
+                    (
+                        "圖片",
+                        f"已在本機 OCR（{len(result.text)} 字、最低信心 {result.confidence:.0%}、"
+                        f"{result.elapsed_ms:.0f} ms），原圖未送出",
+                    )
+                )
+            header = _note("以下是圖片在使用者電腦上 OCR 取得的文字，個資已遮蔽；原始圖片未送出")
+            return _text_block(block.get("type", ""), f"{header}\n{result.text}")
+        reason = result.reason or "OCR 未產生可用文字"
+        report.images_removed += 1
+        if _first_time("img-ocr-fail:" + ident):
+            report.new_items.append(("圖片", f"OCR 失敗，已移除：{reason}"))
+        return _text_block(
+            block.get("type", ""),
+            _note(f"這裡原本有一張圖片，本機 OCR 失敗後已安全移除：{reason}"),
+        )
+
     report.images_removed += 1
     if _first_time("img:" + ident):
         report.new_items.append(("圖片", "已移除"))
@@ -246,23 +371,63 @@ def _handle_document(block: dict, report: MediaReport) -> dict:
             report.new_items.append(("文件", f"{label or 'PDF'} 已移除（設定為不送出文件）"))
         return _text_block(btype, _note(f"這裡原本有一份文件{label}，依使用者設定已移除"))
 
+    if kind == "too_large":
+        report.documents_removed += 1
+        reason = f"PDF 超過 {config.OCR_MAX_IMAGE_BYTES // (1024 * 1024)} MB 上限"
+        if _first_time("doc-large:" + ident):
+            report.new_items.append(("文件", f"{label or 'PDF'} 已移除：{reason}"))
+        return _text_block(btype, _note(f"這裡原本有一份文件{label}，已移除：{reason}"))
+
     if kind == "text" and isinstance(content, str):
         report.documents_extracted += 1
         if _first_time("doc:" + ident):
             report.new_items.append(("文件", f"{label or '純文字文件'} 已轉成文字並遮蔽"))
         return _text_block(btype, content)
 
-    text = extract_pdf_text(content) if kind == "pdf" and isinstance(content, bytes) else None
+    text = None
+    force_ocr = False
+    preflight_failure = ""
+    if kind == "pdf" and isinstance(content, bytes):
+        if len(content) > config.OCR_MAX_IMAGE_BYTES:
+            preflight_failure = f"PDF 超過 {config.OCR_MAX_IMAGE_BYTES // (1024 * 1024)} MB 上限"
+        else:
+            image_state = pdf_contains_images(content)
+            if image_state is None:
+                preflight_failure = "PDF 無法讀取或內容結構無法安全檢查"
+            else:
+                force_ocr = image_state
+                text = extract_pdf_text(content)
+                if force_ocr:
+                    # 有文字層也可能同時嵌入含個資的掃描圖片；整頁 OCR 才不會漏掉。
+                    text = ""
+    used_ocr = False
+    ocr_failure = ""
+    if text == "" and kind == "pdf" and isinstance(content, bytes) and not preflight_failure:
+        ocr_result = ocr.extract_pdf_text(content)
+        if ocr_result.ok:
+            text = ocr_result.text
+            used_ocr = True
+        else:
+            ocr_failure = ocr_result.reason
     if text:
-        report.documents_extracted += 1
+        if used_ocr:
+            report.documents_ocr += 1
+        else:
+            report.documents_extracted += 1
         if _first_time("doc:" + ident):
-            report.new_items.append(("PDF", f"{label}已在本機轉成文字（{len(text)} 字），個資照常遮蔽"))
-        header = _note(f"以下是 PDF{label}在使用者電腦上轉出的文字，個資已遮蔽；原始排版與圖片未保留")
+            method = "OCR" if used_ocr else "轉成文字"
+            report.new_items.append(("PDF", f"{label}已在本機{method}（{len(text)} 字），個資照常遮蔽"))
+        header = _note(
+            f"以下是 PDF{label}在使用者電腦上{'OCR' if used_ocr else '轉出'}的文字，"
+            "個資已遮蔽；原始排版與圖片未保留"
+        )
         return _text_block(btype, f"{header}\n{text}")
 
     report.documents_removed += 1
-    if text == "":
-        reason = "掃描版 PDF（沒有文字層），內容無法檢查是否含個資"
+    if preflight_failure:
+        reason = preflight_failure
+    elif text == "":
+        reason = f"掃描版 PDF 的本機 OCR 失敗：{ocr_failure or '沒有辨識到文字'}"
     elif kind == "pdf":
         reason = "PDF 無法讀取（可能有密碼保護或檔案損毀）"
     else:

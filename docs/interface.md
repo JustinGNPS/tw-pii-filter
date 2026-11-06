@@ -234,6 +234,30 @@ detect_all(text, extra_spans=None) -> dict
 
 `detect_all` 會把規則層內部所有偵測器的結果，加上 `extra_spans` 傳入的語意層結果，合併成一份清單，再交給 Layer 4（見下）統一仲裁重疊、輸出單一結果。
 
+### Chrome 擴充的本機語意端點
+
+擴充 v0.2.0 可選擇呼叫 `POST http://127.0.0.1:8000/extension/ner`，取得語意層原始 spans，再交給 TypeScript `detectAll(text, extraSpans)`。端點不做遮蔽、不建立對照表，也不轉發上游 AI。
+
+請求必須是 JSON，並帶 `X-TW-PII-Client: chrome-extension`：
+
+```json
+{"text": "王小明住在臺北市"}
+```
+
+回應刻意不包含整段原文或 `span.text`；擴充依座標從自己持有的原文重建：
+
+```json
+{
+  "spans": [
+    {"start": 0, "end": 3, "type": "NAME", "confidence": 0.98, "source": "model"}
+  ],
+  "offset_encoding": "unicode-codepoints",
+  "timing": {"detect_ms": 42.5}
+}
+```
+
+`unicode-codepoints` 是必要的跨語言契約：Python 字串索引以 Unicode code point 計算，JavaScript 使用 UTF-16 code unit。擴充必須先轉換座標，否則實體前方出現 Emoji 時會錯位。Proxy 未開啟語意層時回 `409 ner_disabled`，不得解讀成「模型掃描成功但零筆」。
+
 ## Layer 4：重疊衝突解析（`detect_all`）
 
 規則層與語意層各自運作時，同一段文字可能被多個偵測器同時抓到、產生重疊的 span（例如手機號碼剛好是 email local-part 的一部分）。`detect_all` 在合併規則層與語意層的結果後，會執行 Layer 4 衝突解析（實作於 `core/rules/conflict_resolver.py`），**保證回傳的 `spans` 彼此互不重疊**。

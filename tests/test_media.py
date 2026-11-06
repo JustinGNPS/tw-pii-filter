@@ -13,7 +13,7 @@ import respx
 from fastapi.testclient import TestClient
 
 from core.redact.mapping import MappingTable
-from proxy import config, main, masker, media
+from proxy import config, main, masker, media, ocr
 
 UPSTREAM = "https://upstream.test/v1"
 
@@ -55,6 +55,7 @@ BLANK_B64 = base64.b64encode(_make_pdf([])).decode()
 def _fresh_state(monkeypatch):
     media._pdf_cache.clear()
     media._seen.clear()
+    ocr.clear_caches()
     monkeypatch.setattr(config, "IMAGE_POLICY", "remove")
     monkeypatch.setattr(config, "DOCUMENT_POLICY", "extract")
 
@@ -150,13 +151,60 @@ def test_Responses_API的input_file換成input_text():
 
 
 def test_掃描版PDF抽不到字就移除並說明原因():
+    original = ocr.extract_pdf_text
+    ocr.extract_pdf_text = lambda _data: ocr.OCRResult(reason="沒有辨識到文字")
     block = _anthropic_pdf_block()
     block["source"]["data"] = BLANK_B64
     payload = _anthropic_tool_result(block)
+    try:
+        report = media.sanitize(payload)
+        text = payload["messages"][0]["content"][0]["content"][0]["text"]
+        assert "掃描版" in text and "OCR 失敗" in text
+        assert report.documents_removed == 1
+    finally:
+        ocr.extract_pdf_text = original
+
+
+def test_掃描版PDF經本機OCR後照常遮蔽(monkeypatch):
+    monkeypatch.setattr(
+        ocr,
+        "extract_pdf_text",
+        lambda _data: ocr.OCRResult(
+            text="姓名：王小明\n身分證：A123456789\n手機：0912345678",
+            confidence=0.98,
+            elapsed_ms=321,
+            line_count=3,
+        ),
+    )
+    block = _anthropic_pdf_block()
+    block["source"]["data"] = BLANK_B64
+    payload = _anthropic_tool_result(block)
+
     report = media.sanitize(payload)
-    text = payload["messages"][0]["content"][0]["content"][0]["text"]
-    assert "掃描版" in text
-    assert report.documents_removed == 1
+    masker.mask_payload_with_risk(payload, MappingTable())
+    dumped = json.dumps(payload, ensure_ascii=False)
+
+    assert report.documents_ocr == 1 and report.documents_removed == 0
+    assert "A123456789" not in dumped and "0912345678" not in dumped
+    assert "[TW_ID_1]" in dumped and "[TW_PHONE_M_1]" in dumped
+
+
+def test_同時含文字層與圖片的PDF仍強制OCR(monkeypatch):
+    monkeypatch.setattr(media, "pdf_contains_images", lambda _data: True)
+    monkeypatch.setattr(media, "extract_pdf_text", lambda _data: "頁首文字不代表圖片安全")
+    monkeypatch.setattr(
+        ocr,
+        "extract_pdf_text",
+        lambda _data: ocr.OCRResult(text="圖片內身分證 A123456789", confidence=0.99, line_count=1),
+    )
+    payload = _anthropic_tool_result(_anthropic_pdf_block())
+
+    report = media.sanitize(payload)
+    masker.mask_payload_with_risk(payload, MappingTable())
+    dumped = json.dumps(payload, ensure_ascii=False)
+
+    assert report.documents_ocr == 1
+    assert "A123456789" not in dumped and "[TW_ID_1]" in dumped
 
 
 def test_壞掉的PDF不會讓請求失敗():
@@ -210,6 +258,99 @@ def test_allow時圖片照原樣保留(monkeypatch):
     assert payload["messages"][0]["content"][0] == block
     assert report.images_allowed == 1 and not report.changed
     assert "未檢查" in report.new_items[0][1]
+
+
+def test_ocr圖片換成文字後走同一套遮蔽(monkeypatch):
+    monkeypatch.setattr(config, "IMAGE_POLICY", "ocr")
+    monkeypatch.setattr(
+        ocr,
+        "extract_image_text",
+        lambda _data: ocr.OCRResult(
+            text="姓名：王小明\n身分證：A123456789\n手機：0912345678\n信箱：wang.test@example.com",
+            confidence=0.99,
+            elapsed_ms=123,
+            line_count=4,
+        ),
+    )
+    raw = base64.b64encode(b"synthetic image").decode()
+    payload = {
+        "messages": [
+            {
+                "role": "user",
+                "content": [{"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": raw}}],
+            }
+        ]
+    }
+
+    report = media.sanitize(payload)
+    masker.mask_payload_with_risk(payload, MappingTable())
+    dumped = json.dumps(payload, ensure_ascii=False)
+
+    assert report.images_ocr == 1 and report.images_removed == 0
+    assert raw not in dumped and "A123456789" not in dumped and "wang.test@example.com" not in dumped
+    assert "[TW_ID_1]" in dumped and "[TW_PHONE_M_1]" in dumped and "[EMAIL_1]" in dumped
+
+
+def test_ocr圖片低信心時安全移除(monkeypatch):
+    monkeypatch.setattr(config, "IMAGE_POLICY", "ocr")
+    monkeypatch.setattr(
+        ocr,
+        "extract_image_text",
+        lambda _data: ocr.OCRResult(confidence=0.3, reason="最低辨識信心過低"),
+    )
+    raw = base64.b64encode(b"unclear image").decode()
+    payload = {
+        "messages": [
+            {"role": "user", "content": [{"type": "image_url", "image_url": {"url": f"data:image/png;base64,{raw}"}}]}
+        ]
+    }
+
+    report = media.sanitize(payload)
+    dumped = json.dumps(payload, ensure_ascii=False)
+
+    assert report.images_removed == 1 and report.images_ocr == 0
+    assert raw not in dumped and "OCR 失敗後已安全移除" in dumped
+
+
+def test_ocr不會為了讀圖而下載遠端網址(monkeypatch):
+    monkeypatch.setattr(config, "IMAGE_POLICY", "ocr")
+    payload = {
+        "messages": [
+            {"role": "user", "content": [{"type": "image_url", "image_url": {"url": "https://example.test/secret.png"}}]}
+        ]
+    }
+
+    report = media.sanitize(payload)
+    dumped = json.dumps(payload, ensure_ascii=False)
+
+    assert report.images_removed == 1
+    assert "example.test" not in dumped and "無法在本機安全取得圖片" in dumped
+
+
+def test_附件OCR後若遮蔽器失敗則OpenAI路徑阻擋(monkeypatch):
+    def sanitize(payload):
+        payload["messages"][0]["content"] = "OCR 明文 A123456789"
+        return media.MediaReport(images_ocr=1)
+
+    monkeypatch.setattr(media, "sanitize", sanitize)
+    monkeypatch.setattr(masker, "mask_payload_with_risk", lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("boom")))
+    body = json.dumps({"messages": [{"role": "user", "content": []}]}).encode()
+
+    with pytest.raises(main.MediaPrivacyError):
+        main._mask_request("chat/completions", body, MappingTable())
+
+
+def test_附件OCR後若遮蔽器失敗則Claude_Code路徑阻擋(monkeypatch):
+    def sanitize(payload):
+        payload["messages"][0]["content"] = "OCR 明文 A123456789"
+        return media.MediaReport(images_ocr=1)
+
+    monkeypatch.setattr(media, "sanitize", sanitize)
+    monkeypatch.setattr(masker, "mask_payload_with_risk", lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("boom")))
+    payload = {"messages": [{"role": "user", "content": []}]}
+
+    with pytest.raises(main.MediaPrivacyError):
+        main._mask_anthropic_payload(payload, MappingTable())
 
 
 # ── 邊界 ─────────────────────────────────────────────────────────

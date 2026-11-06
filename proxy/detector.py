@@ -27,6 +27,9 @@ Path = tuple[Any, ...]
 # 行程共用的偵測快取。agent 每次請求都重送整段對話歷史，同一份檔案內容
 # 會被重複掃十幾次 —— 見 `proxy/cache.py` 的說明。
 CACHE = DetectionCache()
+# 瀏覽器擴充只需要語意層的原始 spans；與完整規則+語意結果分開快取，
+# 避免先做一次 NER、接著又在 detect_all() 內重跑同一段模型推論。
+SEMANTIC_CACHE = DetectionCache()
 
 
 def _extra_spans(text: str) -> list[dict] | None:
@@ -69,6 +72,24 @@ def _keep_allowed_types(spans: list[dict] | None) -> list[dict] | None:
     if spans is None or not config.NER_ALLOW_TYPES:
         return spans
     return [s for s in spans if normalize_type(s.get("type")) in config.NER_ALLOW_TYPES]
+
+
+def detect_semantic(text: str, cache: DetectionCache | None = None) -> list[dict]:
+    """只執行語意層，供本機瀏覽器擴充取得 ``extra_spans``。
+
+    這個介面刻意不跑規則層：擴充已經在瀏覽器內執行 TypeScript 規則，最後會
+    把這裡回傳的 spans 丟給 ``detectAll(text, extraSpans)`` 做 Layer 4 仲裁。
+    重跑規則不只浪費時間，還可能讓兩邊的結果重複。
+
+    關閉 NER 時回傳空陣列；HTTP 層會另外回 409，讓使用者知道不是「模型判定
+    沒有姓名」，而是「語意層根本沒開」。
+    """
+    table = SEMANTIC_CACHE if cache is None else cache
+    return table.get_or_compute(
+        text,
+        lambda value: _extra_spans(value) or [],
+        key_extra=str(config.ENABLE_NER),
+    )
 
 
 def detect(text: str, cache: DetectionCache | None = None) -> dict:

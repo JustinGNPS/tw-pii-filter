@@ -2,7 +2,8 @@
 
 **第 4 步：工具呼叫遞迴處理**——涵蓋純文字對話與工具呼叫（`tool_use`／
 `tool_result`）。圖片與文件（`image`／`document` block）在進這個模組之前
-已由 `proxy/media.py` 處理：文件換成文字，圖片預設換成說明文字。
+已由 `proxy/media.py` 處理：文件換成文字；圖片預設在本機 OCR 後換成文字，
+辨識失敗才換成說明文字。
 `has_unsupported_content()` 仍保留，用來擋萬一漏網的未知類型，寧可明確
 回報「還沒支援」，也不要硬翻出格式不明的請求（參見 `docs/B_progress.md`
 型別代碼正規化那段的教訓：沉默失敗比明確失敗更危險）。
@@ -33,7 +34,7 @@ import json
 from typing import Any
 
 # 目前還不會翻譯的內容類型。圖片與文件在送到這裡之前已由 `proxy/media.py`
-# 處理：文件一律換成文字；圖片預設換成說明文字，`PII_IMAGE_POLICY=allow`
+# 處理：文件一律換成文字；圖片預設本機 OCR 後換成文字，`PII_IMAGE_POLICY=allow`
 # 時保留並由 `_user_message_to_openai()` 轉成 OpenAI 的 image_url。
 # 所以正常情況下這個名單擋不到東西，留著是防禦未知的新 block 類型。
 _UNSUPPORTED_BLOCK_TYPES = ("document",)
