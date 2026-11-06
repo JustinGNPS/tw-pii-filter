@@ -60,3 +60,22 @@ export function showNearMissHint(items: NearMiss[]): void {
     host.remove();
   }, SHOW_MS);
 }
+
+/** 顯示語意分析進度；回傳函式可在完成後立即關閉。 */
+export function showSemanticProgress(): () => void {
+  current?.remove();
+  const host = document.createElement('tw-pii-hint');
+  const root = host.attachShadow({ mode: 'closed' });
+  root.innerHTML = `
+    <style>${STYLE}</style>
+    <div class="toast" role="status">
+      <div class="title">🛡 正在本機辨識姓名、地址、公司與職稱……</div>
+      <div class="foot">文字只送到這台電腦的 127.0.0.1，不會送往外部服務。</div>
+    </div>`;
+  document.documentElement.appendChild(host);
+  current = host;
+  return () => {
+    if (current === host) current = null;
+    host.remove();
+  };
+}

@@ -8,6 +8,17 @@ python-dotenv==1.2.2
 # PDF 轉文字（agent 讀到 PDF 時在本機抽出文字再遮蔽，見 proxy/media.py）。純 Python、無其他相依
 pypdf==6.19.0
 
+# 圖片與掃描版 PDF 的本機 OCR。RapidOCR 內含小型中文偵測／辨識模型；
+# onnxruntime 負責 CPU 推論，pypdfium2 將掃描版 PDF 頁面轉成影像。
+# 版本固定，避免啟動器在不同電腦裝到不相容的新版本。
+rapidocr==3.10.0
+onnxruntime==1.23.2
+pypdfium2==5.14.0
+# 語意層的既有環境使用 NumPy 1.x；明確鎖定，避免 OCR 安裝時升到 2.x
+# 而破壞 torch／transformers 的相容性。
+numpy==1.26.4
+opencv-python-headless==4.11.0.86
+
 # 測試用
 pytest==9.1.1
 pytest-asyncio==1.4.0

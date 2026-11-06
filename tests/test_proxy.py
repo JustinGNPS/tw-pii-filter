@@ -36,6 +36,9 @@ def test_healthz_不會轉發到上游(client):
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
     assert response.json()["mode"] == "masking"
+    assert response.json()["ocr_available"] is True
+    assert response.json()["image_policy"] in config.IMAGE_POLICIES
+    assert response.json()["document_policy"] in config.DOCUMENT_POLICIES
 
 
 # ---------------------------------------------------------------- 語意層預熱
@@ -203,16 +206,17 @@ def test_沒有_v1_前綴的路徑也接得住(client):
 
 
 @respx.mock
-def test_HEAD請求也接得住(client):
+def test_Claude_Code探測由本機處理不轉送上游(client):
     """Claude Code CLI 啟動時會用 HEAD 做連線探測（實測 HEAD /api/hello），
-    catch-all 原本只接 GET/POST/PUT/PATCH/DELETE，漏了 HEAD 會白白回
-    405，即使不影響後續請求也不該讓這種探測性請求平白出錯。"""
+    這是 Anthropic 用戶端探測，不是 OpenAI 相容上游的 API；本機直接回答，
+    避免上游沒有此路徑時逾時，阻擋後續真正的 /v1/messages 請求。"""
     route = respx.head(f"{UPSTREAM}/api/hello").mock(return_value=httpx.Response(200))
 
     response = client.request("HEAD", "/api/hello")
 
     assert response.status_code == 200
-    assert route.called
+    assert response.content == b""
+    assert not route.called
 
 
 # ---------------------------------------------------------------- SSE 串流
