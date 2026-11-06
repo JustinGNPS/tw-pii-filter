@@ -33,6 +33,7 @@ from proxy import (
     config,
     demo,
     detector,
+    extension_api,
     forward,
     masker,
     media,
@@ -54,6 +55,10 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
 )
 logger = logging.getLogger("proxy")
+
+
+class MediaPrivacyError(RuntimeError):
+    """附件已被本機抽字／OCR，但後續遮蔽失敗；此時必須阻擋，不能原樣放行。"""
 
 # 只有這些路徑值得花時間掃描（其餘如 /v1/models 沒有使用者輸入）
 _SCANNED_PATHS = ("chat/completions", "completions", "embeddings", "responses")
@@ -143,6 +148,11 @@ app = FastAPI(title="tw-pii-filter proxy", lifespan=lifespan)
 # **必須在檔案底部那兩條萬用路由之前註冊** —— FastAPI 依註冊順序比對，
 # 晚註冊的話 `/demo` 會先被 `/{path:path}` 接走、當成要轉發給上游的請求。
 app.include_router(demo.router)
+# Chrome 擴充使用的本機語意端點。必須同樣排在底部萬用轉發路由之前，
+# 否則 /extension/ner 會被誤送到上游 AI。
+@app.post("/extension/ner", tags=["extension"])
+async def extension_ner(request: Request) -> dict:
+    return await extension_api.semantic_scan(request)
 
 
 @app.get("/favicon.ico", include_in_schema=False)
@@ -243,6 +253,9 @@ async def healthz() -> dict:
         "upstream_key_loaded": bool(config.UPSTREAM_API_KEY),
         "mode": "masking",  # 第二版：遮蔽 + 還原
         "ner_enabled": config.ENABLE_NER,
+        "ocr_available": settings.ocr_available(),
+        "image_policy": config.IMAGE_POLICY,
+        "document_policy": config.DOCUMENT_POLICY,
         "mapping_entries": len(app.state.mapping),
         # 累計：每個型別看過幾個不重複的真值。log 只印「本輪新增」，
         # 想知道整體狀況看這裡（見 _log_new_values）
@@ -318,13 +331,15 @@ def _mask_request(path: str, body: bytes, table: MappingTable) -> tuple[bytes, f
     `PII_ENABLE_NER=1` 開啟語意層後單次偵測約 742 ms（CPU），若直接在
     event loop 裡同步跑，會擋住同一個 proxy 行程裡的其他請求排隊等它。
 
-    遮蔽或解析失敗一律吞掉並原樣轉發 —— proxy 的第一要務是不要弄壞 agent。
-    代價是那次請求不受保護，因此失敗會以 ERROR 等級留下紀錄。
+    純文字遮蔽或解析失敗沿用既有的相容性策略：記錄 ERROR 後原樣轉發。
+    但附件一旦已在本機抽字／OCR，後續遮蔽失敗就必須 fail closed，否則
+    轉出的明文可能直接送往上游；此情況會拋出 ``MediaPrivacyError`` 阻擋請求。
     """
     if not body or not any(path.endswith(p) for p in _SCANNED_PATHS):
         return body, 0.0
 
     started = time.perf_counter()
+    media_report = None
     try:
         payload = json.loads(body.decode("utf-8"))
         # 先把圖片／PDF 換成文字，PDF 抽出的文字才會跟其他文字走同一條遮蔽路徑
@@ -340,7 +355,10 @@ def _mask_request(path: str, body: bytes, table: MappingTable) -> tuple[bytes, f
         _log_combination_risk(combination_risk)
     except json.JSONDecodeError:
         pass  # 不是 JSON（例如檔案上傳），本來就沒得掃
-    except Exception as exc:  # noqa: BLE001 - 遮蔽失敗不能讓 agent 拿不到回覆
+    except Exception as exc:  # noqa: BLE001
+        if media_report is not None and media_report.changed:
+            logger.error("附件已在本機處理，但後續遮蔽失敗；為避免外洩已阻擋請求：%s", exc)
+            raise MediaPrivacyError("附件文字遮蔽失敗，請求已安全阻擋") from exc
         logger.error("遮蔽失敗，該次請求未受保護：%s", exc)
     return body, (time.perf_counter() - started) * 1000
 
@@ -349,7 +367,19 @@ async def _proxy(path: str, request: Request) -> Response:
     _record_arrival(request.method, path)
     table: MappingTable = request.app.state.mapping
     body = await request.body()
-    body, detect_ms = await asyncio.to_thread(_mask_request, path, body, table)
+    try:
+        body, detect_ms = await asyncio.to_thread(_mask_request, path, body, table)
+    except MediaPrivacyError as exc:
+        return JSONResponse(
+            status_code=500,
+            content={
+                "error": {
+                    "message": str(exc),
+                    "type": "privacy_filter_error",
+                    "code": "media_masking_failed",
+                }
+            },
+        )
 
     started = time.perf_counter()
     upstream = await forward.open_upstream(
@@ -505,17 +535,23 @@ def _upstream_rejection_message(status_code: int, content: bytes) -> str:
 def _mask_anthropic_payload(payload: dict, table: MappingTable) -> tuple[dict, float]:
     """遮蔽 Anthropic 格式的請求 payload，回傳 (原 payload，花費的毫秒數)。
 
-    與 `_mask_request` 對稱：同步函式、丟到 thread pool 執行、失敗一律吞掉
-    原樣放行——proxy 的第一要務是不能弄壞 agent，這條路徑也不例外。
+    與 `_mask_request` 對稱：同步函式並丟到 thread pool 執行。純文字遮蔽
+    失敗時保留既有相容性行為；附件已抽字／OCR 後若遮蔽失敗則 fail closed，
+    拋出 ``MediaPrivacyError``，避免附件中的明文流向上游。
     """
     started = time.perf_counter()
+    media_report = None
     try:
-        media.log_report(media.sanitize(payload), tag="（Claude Code）")
+        media_report = media.sanitize(payload)
+        media.log_report(media_report, tag="（Claude Code）")
         issued_before = table.issued_counts()
         _, combination_risk = masker.mask_payload_with_risk(payload, table)
         _log_new_values(issued_before, table, tag="（Claude Code）")
         _log_combination_risk(combination_risk)
-    except Exception as exc:  # noqa: BLE001 - 遮蔽失敗不能讓 agent 拿不到回覆
+    except Exception as exc:  # noqa: BLE001
+        if media_report is not None and media_report.changed:
+            logger.error("Claude Code 附件已在本機處理，但後續遮蔽失敗；已阻擋請求：%s", exc)
+            raise MediaPrivacyError("附件文字遮蔽失敗，請求已安全阻擋") from exc
         logger.error("遮蔽失敗，該次請求未受保護：%s", exc)
     return payload, (time.perf_counter() - started) * 1000
 
@@ -534,7 +570,10 @@ async def _proxy_anthropic(request: Request) -> Response:
     started = time.perf_counter()
     # 圖片／PDF 在這一步就換成文字（見 proxy/media.py），所以下面的檢查
     # 正常情況下不會再擋到東西 —— 留著是防禦未知的新 block 類型
-    payload, detect_ms = await asyncio.to_thread(_mask_anthropic_payload, payload, table)
+    try:
+        payload, detect_ms = await asyncio.to_thread(_mask_anthropic_payload, payload, table)
+    except MediaPrivacyError as exc:
+        return _anthropic_error(500, "privacy_filter_error", str(exc))
 
     if anthropic_adapter.has_unsupported_content(payload):
         return _anthropic_error(
@@ -843,6 +882,18 @@ async def _capture_anthropic_messages(request: Request) -> Response:
         sse = _fake_sse_text(text)
 
     return StreamingResponse(iter([sse]), media_type="text/event-stream")
+
+
+@app.head("/api/hello", include_in_schema=False)
+async def claude_code_probe() -> Response:
+    """在本機回覆 Claude Code 的啟動探測，不把非標準路徑送到上游。
+
+    Claude Code 啟動時會先送 ``HEAD /api/hello``。OpenAI 相容上游未必提供
+    這個 Anthropic 專用路徑；轉送它不但沒有意義，CGU Gateway 還可能等到
+    連線逾時，讓 CLI 在真正呼叫 ``/v1/messages`` 之前就失敗。
+    """
+    _record_arrival("HEAD", "api/hello")
+    return Response(status_code=200)
 
 
 @app.api_route("/v1/{path:path}", methods=_METHODS)

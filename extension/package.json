@@ -1,6 +1,6 @@
 {
   "name": "tw-pii-filter-extension",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "本地端敏感資訊過濾機制 — Chrome MV3 瀏覽器擴充（載體一）",
   "type": "module",

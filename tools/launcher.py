@@ -134,6 +134,8 @@ def _print_usage(port: int, health: dict) -> None:
     print("\n" + "-" * 60)
     print(f"  [OK] proxy 已就緒   示範頁面：{base}/demo")
     print(f"    語意層：{'開啟' if health.get('ner_enabled') else '關閉（只跑規則層）'}")
+    ocr_ready = health.get("ocr_available") and health.get("image_policy") == "ocr"
+    print(f"    附件 OCR：{'開啟（圖片與掃描 PDF 在本機辨識）' if ocr_ready else '未開啟或套件不完整'}")
     if upstream_ok:
         print("    雲端 AI：已設定（agent 可以接過來了）")
     else:
@@ -167,7 +169,10 @@ def _wait_then_open(port: int, open_browser: bool, proc: subprocess.Popen) -> No
 # proxy/requirements.txt 裡執行期需要的模組（import 名稱）。
 # 「啟動.bat」只在 .venv 不存在時才安裝套件；之後 requirements.txt 新增套件
 # （例如 pypdf），已經建好的 .venv 不會自己長出來，所以每次啟動前補一次。
-_RUNTIME_MODULES = ("fastapi", "uvicorn", "httpx", "dotenv", "pypdf")
+_RUNTIME_MODULES = (
+    "fastapi", "uvicorn", "httpx", "dotenv", "pypdf",
+    "rapidocr", "onnxruntime", "pypdfium2", "PIL", "cv2",
+)
 
 
 def _ensure_requirements() -> None:

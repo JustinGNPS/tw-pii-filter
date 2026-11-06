@@ -205,15 +205,17 @@ if RISK_REDUCTION_POLICY not in _RISK_REDUCTION_POLICIES:
 # 看不到裡面的個資。在此之前 Claude Code 路徑遇到就回 501（而且每輪重送歷史，
 # 整個工作階段卡死），OpenAI 格式則原封不動送出、沒有任何警告。
 #
-#   PII_IMAGE_POLICY     remove（預設）：換成一行說明，AI 知道這裡原本有圖
+#   PII_IMAGE_POLICY     ocr（預設）：本機 OCR → 文字遮蔽；失敗就移除
+#                        remove：換成一行說明，AI 知道這裡原本有圖
 #                        allow：照原樣送出（使用者自行承擔，log 會提醒）
 #   PII_DOCUMENT_POLICY  extract（預設）：本機抽出文字 → 照一般文字遮蔽 → 取代原 PDF
+#                        沒有文字層時改走本機 OCR；兩者都失敗才移除
 #                        remove：換成一行說明
 #
 # 預設值選「保護優先」：看不見內容的東西，寧可不送。
-IMAGE_POLICY = os.getenv("PII_IMAGE_POLICY", "remove").strip().lower()
+IMAGE_POLICY = os.getenv("PII_IMAGE_POLICY", "ocr").strip().lower()
 DOCUMENT_POLICY = os.getenv("PII_DOCUMENT_POLICY", "extract").strip().lower()
-IMAGE_POLICIES = ("remove", "allow")
+IMAGE_POLICIES = ("ocr", "remove", "allow")
 DOCUMENT_POLICIES = ("extract", "remove")
 if IMAGE_POLICY not in IMAGE_POLICIES:
     raise ValueError(f"PII_IMAGE_POLICY={IMAGE_POLICY!r} 無效；可用值：{', '.join(IMAGE_POLICIES)}")
@@ -221,6 +223,19 @@ if DOCUMENT_POLICY not in DOCUMENT_POLICIES:
     raise ValueError(
         f"PII_DOCUMENT_POLICY={DOCUMENT_POLICY!r} 無效；可用值：{', '.join(DOCUMENT_POLICIES)}"
     )
+
+# OCR 安全界線。全部在本機執行；超限或信心不足一律視為失敗並移除附件。
+OCR_MIN_CONFIDENCE = float(os.getenv("PII_OCR_MIN_CONFIDENCE", "0.60"))
+OCR_MAX_IMAGE_BYTES = int(os.getenv("PII_OCR_MAX_IMAGE_BYTES", str(15 * 1024 * 1024)))
+OCR_MAX_IMAGE_PIXELS = int(os.getenv("PII_OCR_MAX_IMAGE_PIXELS", "25000000"))
+OCR_MAX_PDF_PAGES = int(os.getenv("PII_OCR_MAX_PDF_PAGES", "10"))
+OCR_PDF_SCALE = float(os.getenv("PII_OCR_PDF_SCALE", "2.0"))  # 2.0 = 144 DPI
+if not 0 <= OCR_MIN_CONFIDENCE <= 1:
+    raise ValueError("PII_OCR_MIN_CONFIDENCE 必須介於 0 與 1")
+if min(OCR_MAX_IMAGE_BYTES, OCR_MAX_IMAGE_PIXELS, OCR_MAX_PDF_PAGES) <= 0:
+    raise ValueError("OCR 檔案大小、像素與 PDF 頁數上限必須大於 0")
+if OCR_PDF_SCALE <= 0:
+    raise ValueError("PII_OCR_PDF_SCALE 必須大於 0")
 
 
 def startup_summary() -> str:
@@ -246,8 +261,8 @@ def startup_summary() -> str:
         f"語意層（NER）：{ner_status}\n"
         f"組合風險提示：{'已啟用' if ENABLE_RISK_WARNING else '未啟用'}\n"
         f"殘餘風險自動降階：{RISK_REDUCTION_POLICY}\n"
-        f"圖片：{'移除（換成說明文字）' if IMAGE_POLICY == 'remove' else '照原樣送出（不檢查）'}｜"
-        f"PDF：{'本機轉文字後遮蔽' if DOCUMENT_POLICY == 'extract' else '移除'}\n"
+        f"圖片：{ {'ocr': '本機 OCR 後遮蔽', 'remove': '移除（換成說明文字）', 'allow': '照原樣送出（不檢查）'}[IMAGE_POLICY] }｜"
+        f"PDF：{'文字擷取／本機 OCR 後遮蔽' if DOCUMENT_POLICY == 'extract' else '移除'}\n"
         f"對照表閒置逾時：{f'{MAPPING_IDLE_TIMEOUT:.0f} 秒' if MAPPING_IDLE_TIMEOUT else '停用'}\n"
         f"示範頁面：{'已啟用（/demo）' if ENABLE_DEMO else '未啟用（設 PII_ENABLE_DEMO=1 開啟）'}"
     )

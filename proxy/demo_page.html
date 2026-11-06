@@ -570,13 +570,14 @@ npm run build
       </label>
       <label class="policy-control">agent 讀到的圖片
         <select id="setImage">
-          <option value="remove">移除，換成一行說明（建議）</option>
+          <option value="ocr">本機 OCR 後遮蔽（建議；失敗就移除）</option>
+          <option value="remove">直接移除，換成一行說明</option>
           <option value="allow">照原樣送出（不檢查內容）</option>
         </select>
       </label>
       <label class="policy-control">agent 讀到的 PDF
         <select id="setDoc">
-          <option value="extract">在本機轉成文字後遮蔽（建議）</option>
+          <option value="extract">本機抽字／掃描頁 OCR 後遮蔽（建議）</option>
           <option value="remove">整份移除</option>
         </select>
       </label>

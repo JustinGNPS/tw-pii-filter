@@ -104,6 +104,19 @@ def test_示範頁送出的設定會套用(client):
     assert config.IMAGE_POLICY == "allow"
 
 
+def test_本機OCR策略可立即套用(monkeypatch):
+    monkeypatch.setattr(settings, "ocr_available", lambda: True)
+    state = settings.apply({"image_policy": "ocr"}, persist=False)
+    assert config.IMAGE_POLICY == "ocr"
+    assert "ocr" in state["options"]["image_policy"]
+
+
+def test_OCR套件缺少時不能切成ocr(monkeypatch):
+    monkeypatch.setattr(settings, "ocr_available", lambda: False)
+    with pytest.raises(ValueError, match="OCR"):
+        settings.apply({"image_policy": "ocr"}, persist=False)
+
+
 def test_別的網站送來的請求擋下_CSRF(client):
     response = client.post(
         "/demo/settings",

@@ -766,7 +766,7 @@ A 在 PR #47（issue #27）替規則層加了全形→半形正規化之後，`d
 | Continue | `~/.continue/config.yaml` 自訂 `provider: openai` + `apiBase` | function calling | **已實測通過**（再次驗證 tool_calls 還原修復不是只對 OpenCode 有效） |
 | Cline | GUI 設定選 **OpenAI Compatible**，填 Base URL/API Key/Model | function calling | **已實測通過**（第三款驗證同一個修復） |
 | Codex | `config.toml` 自訂 provider（`wire_api = "responses"`） | **Responses API**（`POST /v1/responses`，欄位結構完全不同） | **已實測通過**（遮蔽與還原兩側原本都靜默失效，見下；**寫檔路徑 08-22 補驗完成**，見下方註記） |
-| Claude Code | `ANTHROPIC_BASE_URL` | Anthropic Messages API（欄位結構完全不同，另有協定翻譯層） | **已實測通過**（純文字對話 + 工具呼叫，含真串流；PDF 轉文字遮蔽、圖片預設移除，見下） |
+| Claude Code | `ANTHROPIC_BASE_URL` | Anthropic Messages API（欄位結構完全不同，另有協定翻譯層） | **已實測通過**（純文字對話 + 工具呼叫，含真串流；PDF 抽字／掃描頁 OCR、圖片本機 OCR 後遮蔽，見下） |
 | **Cursor** | — | 廠商代管後端，無自訂位址欄位 | **不支援**（見上「BYOK vs. 代管帳號」） |
 
 「編輯機制」這一欄是 OpenCode 測試後才加的——它正是還原邏輯要走哪條
@@ -974,7 +974,7 @@ TypeScript 實作，**不會直接 import 這份程式碼**。它的角色是「
 | 項目 | 說明 |
 |---|---|
 | 共用模組的位置 | 見「對 C」，尚未有結論 |
-| 圖片內容的個資（OCR） | 2026-10-21 起圖片預設移除（`PII_IMAGE_POLICY=remove`），PDF 本機轉文字後遮蔽。圖片裡的文字要靠 OCR 才看得到，模型與延遲成本高，未做 |
+| 圖片內容的個資（OCR） | 2026-11-06 已完成本機 OCR：圖片先辨識成文字再走既有遮蔽；掃描版 PDF 逐頁 OCR。低信心、超限或失敗一律移除，原始圖片不送上游 |
 | `detect_all().combination_risk` 與載體自算的關係 | A 在 PR #24 讓 `detect_all()` 回傳原文的組合風險，proxy 則另外算遮蔽後的殘餘風險，同一段文字兩個數字不同（1.00 vs 0.70）。已在 PR #25 請 A 裁示，見決定 12 |
 
 ~~其他 agent 實測~~ —— 已解決：相容性表上六款（Aider／OpenCode／Continue／Cline／Codex／Claude Code）全部實測通過，Cursor 誠實列為不支援。

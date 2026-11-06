@@ -91,6 +91,11 @@ const STYLE = `
   .risk.high .risk-body { color: #7f1d1d; }
   .risk-body ul { margin: 5px 0 0; padding-left: 17px; }
   .risk-body li { margin: 2px 0; }
+  .analysis-warning {
+    margin: 10px 12px 2px; padding: 10px 12px; border-radius: 9px;
+    border: 1px solid #f59e0b; background: #fffbeb; color: #92400e;
+    font-size: 11.5px; line-height: 1.55;
+  }
 
   @media (prefers-color-scheme: dark) {
     .risk { border-color: #a16207; background: #2a2110; }
@@ -129,6 +134,7 @@ export function showPanel(
   spans: Span[],
   placeholders: string[],
   risk: CombinationRisk | null = null,
+  semanticWarning: string | null = null,
 ): Promise<PanelDecision> {
   return new Promise((resolve) => {
     const host = document.createElement('div');
@@ -142,8 +148,13 @@ export function showPanel(
     // 一個 span 都沒有、只有組合風險時，標題不能寫「偵測到 0 項」——
     // 那會讓使用者以為沒事，正好抵消掉組合風險提示要傳達的訊息。
     const onlyRisk = spans.length === 0 && risk !== null;
-    const heading = onlyRisk ? '這段文字可能可以指認出特定個人' : `偵測到 ${spans.length} 項敏感資訊`;
-    const subtitle = onlyRisk
+    const onlyWarning = spans.length === 0 && risk === null && semanticWarning !== null;
+    const heading = onlyWarning
+      ? '本機語意分析未完成'
+      : onlyRisk ? '這段文字可能可以指認出特定個人' : `偵測到 ${spans.length} 項敏感資訊`;
+    const subtitle = onlyWarning
+      ? '目前只能使用身分證、電話、電子郵件等規則偵測；姓名與地址可能尚未被辨識。'
+      : onlyRisk
       ? '沒有偵測到身分證、電話這類明確的個資，但下列資訊組合起來仍有識別風險。'
       : '以下內容將在送出前於本地端替換成佔位符。取消勾選的項目會維持原文。';
 
@@ -155,6 +166,7 @@ export function showPanel(
           <h1>${heading}</h1>
           <p class="sub">${subtitle}</p>
         </header>
+        <div class="warning-slot"></div>
         <div class="risk-slot"></div>
         <div class="list"></div>
         <p class="note">分析全程在你的裝置上完成，原文不會離開這台電腦。</p>
@@ -162,10 +174,17 @@ export function showPanel(
           <button class="link" data-act="cancel">不貼上</button>
           <div class="spacer"></div>
           <button class="ghost" data-act="raw">直接貼上原文</button>
-          <button class="primary" data-act="mask">遮蔽後貼上</button>
+          <button class="primary" data-act="mask">${onlyWarning ? '僅依規則結果貼上' : '遮蔽後貼上'}</button>
         </footer>
       </div>
     `;
+
+    if (semanticWarning) {
+      const warning = document.createElement('div');
+      warning.className = 'analysis-warning';
+      warning.textContent = `語意層未使用：${semanticWarning}。你可以取消貼上，或明確選擇只依規則結果繼續。`;
+      backdrop.querySelector('.warning-slot')!.append(warning);
+    }
 
     // 組合風險提示：只在真的有風險時才出現，避免每次都跳一塊黃色區塊而被無視
     if (risk) {

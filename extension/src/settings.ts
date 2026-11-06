@@ -27,6 +27,7 @@ export const CONFIGURABLE_TYPES = [
 ] as const;
 
 export const ENABLED_TYPES_KEY = 'enabledTypes';
+export const SEMANTIC_ENABLED_KEY = 'semanticEnabled';
 
 export function configurableTypes(): Array<{ code: string; label: string }> {
   return CONFIGURABLE_TYPES.map((code) => ({ code, label: typeLabel(code) }));
@@ -54,5 +55,23 @@ export async function saveEnabledTypes(enabled: Iterable<string>): Promise<void>
     await chrome.storage.local.set({ [ENABLED_TYPES_KEY]: [...enabled] });
   } catch (error) {
     console.warn('[tw-pii-filter] 設定寫入失敗', error);
+  }
+}
+
+/** 語意層需要本機 Proxy；預設關閉，必須由使用者明確開啟。 */
+export async function loadSemanticEnabled(): Promise<boolean> {
+  try {
+    const stored = await chrome.storage.local.get(SEMANTIC_ENABLED_KEY);
+    return stored[SEMANTIC_ENABLED_KEY] === true;
+  } catch {
+    return false;
+  }
+}
+
+export async function saveSemanticEnabled(enabled: boolean): Promise<void> {
+  try {
+    await chrome.storage.local.set({ [SEMANTIC_ENABLED_KEY]: enabled });
+  } catch (error) {
+    console.warn('[tw-pii-filter] 語意層設定寫入失敗', error);
   }
 }
